@@ -1,0 +1,20 @@
+# --- Core (Phase 1) ---
+anthropic>=0.40.0
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.1
+
+# --- Resume / ATS agent (Phase 1+) ---
+pdfminer.six>=20240706      # PDF resume parsing
+python-docx>=1.1.2          # DOCX read + write tailored resumes
+
+# --- Phase 2: Vector DB + Resource Agent ---
+chromadb>=0.5.0
+schedule>=1.2.2
+
+# --- Phase 3: API + UI + Auth ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+streamlit>=1.38.0
+bcrypt>=4.2.0
+python-jose[cryptography]>=3.3.0
+cryptography>=43.0.0        # Fernet encryption for user API keys

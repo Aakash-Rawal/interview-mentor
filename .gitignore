@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Data / artifacts
+chroma_data/
+uploads/
+*.docx
+!skills/**/*.docx
+
+# Source design docs (kept out of the code repo)
+pe_prep_build_plan.*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
