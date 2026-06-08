@@ -53,6 +53,21 @@ python main.py
 > /resume                               # resume / ATS assistant
 ```
 
+## Web UI
+
+A local Streamlit app runs alongside the CLI, sharing the same config + database:
+
+```bash
+streamlit run ui/app.py
+```
+
+Three pages (sidebar nav):
+- **💬 Learn & Mock** — pick domain (PE/NE) + topic, then **Learn** (chat with the Tutor) or **Mock** (start a mock, answer turn by turn, finish to get a scored rubric). Mock scores persist to Postgres.
+- **📄 Resume Lab** — paste or upload (`.pdf/.docx/.txt`) your resume + a job description, then **Analyze (ATS)**, **Tailor resume**, or **Cover letter**; tailored output is downloadable.
+- **🛠 Control Panel** — Health (key validity, DB, skill files), Status (model, domains, question bank, live row counts), Settings (edit `.env`: `MODEL_NAME`, `ANTHROPIC_API_KEY`, `DATABASE_URL`).
+
+The UI uses the same `local-user` as the CLI, so scores/sessions are unified. Restart after changing settings. (Phase 3 adds auth + multi-user + FastAPI between the UI and agents.)
+
 ## Resume / ATS assistant
 `/resume` walks you through:
 1. Provide your resume (file path to `.pdf`/`.docx`/`.txt`, or paste).
