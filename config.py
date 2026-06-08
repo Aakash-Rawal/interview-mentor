@@ -8,13 +8,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # --- Paths ---
 BASE_DIR = Path(__file__).resolve().parent
 SKILLS_DIR = BASE_DIR / "skills"
 UPLOADS_DIR = BASE_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
+
+# Load .env from the project root, regardless of the working directory the
+# CLI or UI was launched from.
+load_dotenv(BASE_DIR / ".env")
 
 # --- Secrets / connection ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")

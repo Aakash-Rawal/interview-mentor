@@ -7,7 +7,7 @@ the scores table.
 """
 import json
 
-from agents.base import load_skill, call_claude
+from agents.base import load_skill, call_claude, stream_claude
 from context.shared_context import SharedContext
 from question_bank.questions import get_questions, get_question_by_id
 
@@ -122,25 +122,40 @@ class Interviewer:
         self.transcript.append({"role": "assistant", "content": self.question["prompt"]})
         return opener
 
-    def turn(self, ctx: SharedContext, user_input: str) -> str:
-        if not self.active or not self.question:
-            return "No mock in progress. Say 'start a mock' first."
-
+    def _conduct_system(self, ctx: SharedContext) -> str:
         skill = load_skill(self.topic)
         domain_label = {"pe": "Production Engineering / SRE",
                         "ne": "Network Engineering"}.get(ctx.current_domain, ctx.current_domain)
         hint_rule = ("Hints are ON: you may give a gentle directional hint if they're stuck."
                      if getattr(self, "hints", False)
                      else "Hints are OFF: do not hint unless they explicitly ask.")
-        system = CONDUCT_SYSTEM.format(
+        return CONDUCT_SYSTEM.format(
             domain=domain_label, question=self.question["prompt"],
             notes=self.question["expected_answer_notes"], skill=skill or "(none)",
             hint_rule=hint_rule,
         )
+
+    def turn(self, ctx: SharedContext, user_input: str) -> str:
+        if not self.active or not self.question:
+            return "No mock in progress. Say 'start a mock' first."
+        system = self._conduct_system(ctx)
         self.transcript.append({"role": "user", "content": user_input})
         reply = call_claude(system, self.transcript[-16:])
         self.transcript.append({"role": "assistant", "content": reply})
         return reply
+
+    def turn_stream(self, ctx: SharedContext, user_input: str):
+        """Yield interviewer reply deltas; record the full turn at the end."""
+        if not self.active or not self.question:
+            yield "No mock in progress. Say 'start a mock' first."
+            return
+        system = self._conduct_system(ctx)
+        self.transcript.append({"role": "user", "content": user_input})
+        chunks = []
+        for piece in stream_claude(system, self.transcript[-16:]):
+            chunks.append(piece)
+            yield piece
+        self.transcript.append({"role": "assistant", "content": "".join(chunks)})
 
     def finish_mock(self, ctx: SharedContext) -> dict:
         if not self.active or not self.question:

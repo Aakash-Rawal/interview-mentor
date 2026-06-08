@@ -185,9 +185,7 @@ def page_chat():
             with st.chat_message("user"):
                 st.markdown(prompt)
             with st.chat_message("assistant"):
-                with st.spinner("Thinking…"):
-                    reply = orch.tutor.respond(ctx, prompt)
-                st.markdown(reply)
+                st.write_stream(orch.tutor.respond_stream(ctx, prompt))
         return
 
     # ---- Mock mode ----
@@ -218,9 +216,7 @@ def page_chat():
         with st.chat_message("user"):
             st.markdown(prompt)
         with st.chat_message("assistant"):
-            with st.spinner("Interviewer…"):
-                reply = interviewer.turn(ctx, prompt)
-            st.markdown(reply)
+            st.write_stream(interviewer.turn_stream(ctx, prompt))
 
 
 def render_ats(rep: dict):

@@ -51,3 +51,24 @@ def call_claude(system: str, messages: list[dict],
         messages=messages,
     )
     return "".join(block.text for block in resp.content if block.type == "text")
+
+
+def stream_claude(system: str, messages: list[dict],
+                  max_tokens: int = config.MAX_TOKENS):
+    """Same call as call_claude, but yields text deltas as they arrive.
+
+    For UIs that render token-by-token (st.write_stream). Callers that need the
+    full text should accumulate the yielded pieces.
+    """
+    with get_client().messages.stream(
+        model=config.MODEL_NAME,
+        max_tokens=max_tokens,
+        system=[{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=messages,
+    ) as stream:
+        for text in stream.text_stream:
+            yield text
