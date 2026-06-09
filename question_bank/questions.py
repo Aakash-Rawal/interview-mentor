@@ -1,9 +1,11 @@
-"""Hardcoded question bank for Phase 1 (replaced by a vector DB in Phase 2).
+"""Question bank: hardcoded Phase-1 questions + approved scraped questions from DB.
 
-Each question:
+Each question dict has:
     id, domain, topic, difficulty, tags, prompt, expected_answer_notes
 
-Helpers let the Interviewer filter by domain/topic and exclude already-seen IDs.
+Hardcoded questions always load. Approved scraped questions are merged in lazily
+from the DB by get_questions() / get_question_by_id() so the Interviewer
+automatically benefits as the pipeline populates the table.
 """
 
 QUESTIONS = [
@@ -150,11 +152,57 @@ QUESTIONS = [
 ]
 
 
+def _load_scraped_questions() -> list[dict]:
+    """Return approved scraped questions from the DB, formatted like QUESTIONS dicts.
+
+    Returns an empty list if the DB is unavailable (graceful degradation).
+    """
+    try:
+        import json as _json
+        from db.connection import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, source, domain, topic, difficulty, tags,
+                       prompt, expected_answer_notes
+                FROM scraped_questions
+                WHERE approved = TRUE
+                """
+            )
+            rows = cur.fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+
+    result = []
+    for row in rows:
+        tags = row["tags"]
+        if isinstance(tags, str):
+            try:
+                tags = _json.loads(tags)
+            except Exception:  # noqa: BLE001
+                tags = []
+        result.append({
+            "id": f"scraped-{row['id']}",
+            "domain": row["domain"],
+            "topic": row["topic"],
+            "difficulty": row["difficulty"],
+            "tags": tags,
+            "prompt": row["prompt"],
+            "expected_answer_notes": row["expected_answer_notes"],
+        })
+    return result
+
+
+def _all_questions() -> list[dict]:
+    """Hardcoded questions merged with approved scraped questions."""
+    return QUESTIONS + _load_scraped_questions()
+
+
 def get_questions(domain: str | None = None, topic: str | None = None,
                   exclude_ids: set | None = None) -> list[dict]:
     exclude_ids = exclude_ids or set()
     out = []
-    for q in QUESTIONS:
+    for q in _all_questions():
         if domain and q["domain"] != domain:
             continue
         if topic and q["topic"] != topic:
@@ -166,4 +214,4 @@ def get_questions(domain: str | None = None, topic: str | None = None,
 
 
 def get_question_by_id(qid: str) -> dict | None:
-    return next((q for q in QUESTIONS if q["id"] == qid), None)
+    return next((q for q in _all_questions() if q["id"] == qid), None)

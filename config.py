@@ -60,7 +60,73 @@ SKILL_FILES = {
     # Resume
     "ats": "resume/ats_systems.md",
     "resume_writing": "resume/resume_writing.md",
+    # Scraper — edit skills/scraper/extraction_focus.md to change what gets extracted
+    "scraper_focus": "scraper/extraction_focus.md",
 }
+
+
+# --- Scraper ---
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID", "")
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
+REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "interview_mentor_scraper/1.0")
+
+# Subreddits to mine for interview questions.
+REDDIT_SUBREDDITS = ["sre", "devops", "networking", "linuxadmin", "ExperiencedDevs"]
+# Search terms that surface real interview-experience posts.
+REDDIT_SEARCH_TERMS = ["interview questions", "what were you asked", "interview experience",
+                       "interview prep", "got the job", "failed the interview"]
+
+# Stack Exchange sites + tags we scrape for real Q&A that doubles as interview fodder.
+STACKEXCHANGE_SOURCES = [
+    {"site": "serverfault",  "tags": ["networking", "linux", "bgp", "troubleshooting"]},
+    {"site": "unix",         "tags": ["linux", "bash", "performance", "disk"]},
+    {"site": "networkengineering", "tags": ["bgp", "ospf", "routing", "switching", "vpc"]},
+]
+# Only pull questions with at least this many upvotes (quality gate).
+STACKEXCHANGE_MIN_SCORE = 5
+
+# GitHub — personal access token gives 5k req/hr (vs 60 unauthenticated).
+# Create one at https://github.com/settings/tokens (no scopes needed for public repos).
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+
+# Repos to mine for question content. Each entry is "owner/repo".
+# File extensions to read from each repo (markdown only by default).
+GITHUB_REPOS = [
+    # Coding / algorithms / system design
+    "donnemartin/system-design-primer",
+    "checkcheckzz/system-design-interview",
+    "alex/what-happens-when",
+    "jwasham/coding-interview-university",
+    "yangshun/tech-interview-handbook",
+    # Networking / SRE / PE
+    "mxssl/sre-interview-prep-guide",
+    "michael-kehoe/sre-university",
+    "bregman-arie/devops-exercises",
+    "trimstray/the-book-of-secret-knowledge",
+    "jlevy/the-art-of-command-line",
+]
+# Only read files with these extensions.
+GITHUB_FILE_EXTENSIONS = {".md", ".rst", ".txt"}
+# Skip files larger than this (bytes) to avoid ingesting huge reference docs.
+GITHUB_MAX_FILE_BYTES = 150_000
+
+# Hacker News — Algolia search API, no auth required.
+# Search terms that surface interview/career/tech discussion threads on HN.
+HN_SEARCH_TERMS = [
+    "ask hn interview questions sre",
+    "ask hn interview questions networking",
+    "ask hn system design interview",
+    "ask hn production engineer interview",
+    "ask hn linux interview",
+    "ask hn how to prepare sre interview",
+]
+# Only fetch HN items with at least this many points.
+HN_MIN_POINTS = 10
+# Max results per search term.
+HN_MAX_RESULTS_PER_TERM = 20
+
+# Auto-approve scraped questions that score at least this quality from Claude (0-10).
+SCRAPER_AUTO_APPROVE_THRESHOLD = 7
 
 
 def validate() -> list[str]:

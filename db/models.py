@@ -73,6 +73,24 @@ SCHEMA = [
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # --- Scraped question bank (Phase 2) ---
+    """
+    CREATE TABLE IF NOT EXISTS scraped_questions (
+        id              SERIAL PRIMARY KEY,
+        source          TEXT NOT NULL,
+        source_id       TEXT,
+        domain          TEXT NOT NULL,
+        topic           TEXT NOT NULL,
+        difficulty      TEXT NOT NULL DEFAULT 'medium',
+        tags            JSONB NOT NULL DEFAULT '[]',
+        prompt          TEXT NOT NULL,
+        expected_answer_notes TEXT NOT NULL DEFAULT '',
+        approved        BOOLEAN NOT NULL DEFAULT FALSE,
+        raw_text        TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (source, source_id)
+    )
+    """,
 ]
 
 
