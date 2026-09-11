@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Edit skill · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>{{ topic | topic }} <span class="muted small">skills/{{ rel }}</span></h1>
+  <div class="actions"><a class="btn" href="/skills">← All skill files</a></div>
+</header>
+{% if saved %}<div class="banner ok">Saved. The next tutor or interviewer message uses it.</div>{% endif %}
+<form method="post" action="/api/skills/{{ topic }}" class="stack">
+  <textarea name="content" rows="34" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.45">{{ content }}</textarea>
+  <div class="actions"><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endblock %}

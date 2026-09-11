@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Mock · Interview Mentor{% endblock %}
+{% block content %}
+{% if not mock %}
+  <header class="page-head"><h1>Mock interview</h1></header>
+  <section class="two-col">
+    <div class="card">
+      <h2>Start a mock</h2>
+      <form method="post" action="/api/mocks" class="stack">
+        <input type="hidden" name="domain" value="{{ domain }}">
+        <label>Topic
+          <select name="topic">
+            {% for t in TOPICS[domain] %}
+              <option value="{{ t }}" {{ 'selected' if t == topic else '' }}>{{ t | topic }} ({{ counts.get(domain, {}).get(t, 0) }} questions)</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Difficulty
+          <select name="difficulty">
+            <option value="any">Any</option>
+            {% for d in DIFFICULTIES %}<option value="{{ d }}">{{ d | capitalize }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="row"><input type="checkbox" name="hints" value="1"> Allow hints when I am stuck</label>
+        <button class="btn primary" type="submit">Start</button>
+      </form>
+      <p class="muted small">You get one question. Answer as you would out loud in a real interview: clarify, reason, be concrete. Click <em>Finish &amp; score</em> when you are done. Questions you have already been scored on are not repeated until the topic runs out.</p>
+    </div>
+    <div class="card">
+      <h2>Past mocks</h2>
+      {% if history %}
+        <ul class="plain">
+        {% for m in history %}
+          <li><a href="/mock/{{ m.id }}"><span class="score s{{ (m.total or 0) | round | int }}">{{ m.total }}</span> {{ m.topic | topic }} · {{ m.difficulty }}</a> <span class="muted">{{ m.finished_at | dt }}</span></li>
+        {% endfor %}
+        </ul>
+      {% else %}<p class="muted">Nothing scored yet.</p>{% endif %}
+    </div>
+  </section>
+
+{% elif mock.status == 'active' %}
+  <header class="chat-head wide">
+    <div>
+      <strong>Mock in progress</strong> — {{ mock.topic | topic }} · {{ mock.difficulty }}{% if mock.hints %} · hints on{% endif %}
+      <div class="muted small">Started {{ mock.created_at | dt }}. Say "done" any time, then finish to be scored.</div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="finish-btn" data-endpoint="/api/mocks/{{ mock.id }}/finish">Finish &amp; score</button>
+      <form method="post" action="/api/mocks/{{ mock.id }}/abandon" onsubmit="return confirm('Abandon this mock without scoring?')">
+        <button class="btn small" type="submit">Abandon</button>
+      </form>
+    </div>
+  </header>
+  <div id="log" class="log tall">
+    {% for m in mock.transcript %}
+      <div class="msg {{ m.role }}"><div class="bubble md">{{ m.content }}</div></div>
+    {% endfor %}
+  </div>
+  <form id="chat-form" class="composer" data-endpoint="/api/mocks/{{ mock.id }}/turns">
+    <textarea id="chat-input" name="text" rows="3" placeholder="Your answer… (Enter to send, Shift+Enter for a new line; paste code freely)" autofocus></textarea>
+    <button class="btn primary" type="submit" id="send-btn">Send</button>
+  </form>
+  <div id="scoring" class="banner info" hidden>Scoring your mock… this takes a moment.</div>
+
+{% else %}
+  <header class="page-head">
+    <h1>{{ mock.topic | topic }} mock · {{ mock.status }}</h1>
+    <div class="actions"><a class="btn primary" href="/mock?domain={{ mock.domain }}">Another mock</a></div>
+  </header>
+  {% if mock.score %}
+  <section class="two-col">
+    <div class="card">
+      <div class="label">Total</div>
+      <div class="big"><span class="score s{{ (mock.total or 0) | round | int }}">{{ mock.total }}</span> / 10</div>
+      <p>{{ mock.score.summary }}</p>
+      {% if mock.score.top_fix %}<p><strong>Top fix:</strong> {{ mock.score.top_fix }}</p>{% endif %}
+      <table class="table">
+        <tbody>
+        {% for dim, d in mock.score.dimensions.items() %}
+          <tr><td>{{ dim | dim }}</td><td><span class="score s{{ (d.score or 0) | round | int }}">{{ d.score }}</span></td><td class="muted">{{ d.note }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      {% if mock.score.coverage %}
+        <h2>Coverage <span class="muted">{{ mock.score.coverage_hit }} / {{ mock.score.coverage_total }} points</span></h2>
+        <ul class="plain coverage">
+        {% for c in mock.score.coverage %}
+          <li class="{{ 'hit' if c.covered else 'miss' }}">{{ '✓' if c.covered else '✗' }} {{ c.point }}{% if c.note %} <span class="muted small">— {{ c.note }}</span>{% endif %}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+      <h2>What a strong answer sounds like</h2>
+      <div class="md">{{ mock.question.sample_answer or mock.score.model_answer or mock.question.expected_answer_notes }}</div>
+      {% if mock.question.follow_ups %}<h3>Follow-ups you should be ready for</h3><ul>{% for f in mock.question.follow_ups %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+  </section>
+  {% endif %}
+  <section class="card">
+    <h2>Transcript</h2>
+    <div class="log static">
+      {% for m in mock.transcript %}
+        <div class="msg {{ m.role }}"><div class="bubble md">{{ m.content }}</div></div>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  IM.renderAll();
+  {% if mock and mock.status == 'active' %}
+  IM.setupChat({ form: '#chat-form', input: '#chat-input', log: '#log', button: '#send-btn' });
+  IM.setupFinish({ button: '#finish-btn', notice: '#scoring' });
+  {% endif %}
+</script>
+{% endblock %}

@@ -4,14 +4,14 @@
   2. tailor    : resume + JD -> full rewrite weaving in missing keywords honestly
   3. cover_letter : resume + JD (+ tone) -> role-specific cover letter
 
-File parsing (PDF/DOCX) is included but lazily imported so the module loads
-even before those libs are installed. Results persist to the applications table.
+File parsing (PDF/DOCX) is lazily imported. Results persist to the applications
+table keyed by user_id. Not wired into the web UI yet — importable and usable from
+scripts; a Resume Lab page is a follow-up.
 """
 import json
 
-from agents.base import load_skill, call_claude
-from context.shared_context import SharedContext
 import config
+from agents.base import call_claude, load_skill
 
 # ---------------------------------------------------------------- parsing
 def parse_resume_file(path: str) -> str:
@@ -89,7 +89,7 @@ Rules:
 
 class ResumeAgent:
     # ---- mode 1: ATS analysis ----
-    def analyze(self, ctx: SharedContext, resume_text: str, jd_text: str) -> dict:
+    def analyze(self, user_id: str, resume_text: str, jd_text: str) -> dict:
         system = ANALYZE_SYSTEM.format(ats_skill=load_skill("ats"))
         raw = call_claude(
             system,
@@ -97,16 +97,12 @@ class ResumeAgent:
             max_tokens=config.MAX_TOKENS_LONG,
         )
         report = self._parse_json(raw)
-        # Update shared context so the rest of the platform sees the gap state.
-        ctx.active_jd = jd_text
-        ctx.ats_keywords_found = report.get("keywords_present", [])
-        ctx.ats_keywords_missing = report.get("keywords_missing", [])
-        self._persist(ctx, jd_text, ats_score=report.get("ats_score"),
+        self._persist(user_id, jd_text, ats_score=report.get("ats_score"),
                       keywords_added=report.get("keywords_missing", []))
         return report
 
     # ---- mode 2: tailoring (full rewrite) ----
-    def tailor(self, ctx: SharedContext, resume_text: str, jd_text: str) -> str:
+    def tailor(self, user_id: str, resume_text: str, jd_text: str) -> str:
         system = TAILOR_SYSTEM.format(
             ats_skill=load_skill("ats"), writing_skill=load_skill("resume_writing"))
         result = call_claude(
@@ -114,11 +110,11 @@ class ResumeAgent:
             [{"role": "user", "content": self._payload(resume_text, jd_text)}],
             max_tokens=config.MAX_TOKENS_LONG,
         )
-        self._persist(ctx, jd_text, tailored_resume=result)
+        self._persist(user_id, jd_text, tailored_resume=result)
         return result
 
     # ---- mode 3: cover letter ----
-    def cover_letter(self, ctx: SharedContext, resume_text: str, jd_text: str,
+    def cover_letter(self, user_id: str, resume_text: str, jd_text: str,
                      tone: str = "confident and professional") -> str:
         system = COVER_SYSTEM.format(tone=tone, writing_skill=load_skill("resume_writing"))
         letter = call_claude(
@@ -126,7 +122,7 @@ class ResumeAgent:
             [{"role": "user", "content": self._payload(resume_text, jd_text)}],
             max_tokens=config.MAX_TOKENS_LONG,
         )
-        self._persist(ctx, jd_text, cover_letter=letter)
+        self._persist(user_id, jd_text, cover_letter=letter)
         return letter
 
     # ---- helpers ----
@@ -144,12 +140,12 @@ class ResumeAgent:
             return {"error": "Could not parse analysis", "raw": raw}
 
     @staticmethod
-    def _persist(ctx: SharedContext, jd_text: str, **fields) -> None:
+    def _persist(user_id: str, jd_text: str, **fields) -> None:
         """Best-effort upsert into applications. Never crash on DB error."""
         try:
             from db.connection import get_cursor
             cols = ["user_id", "jd_text"]
-            vals = [ctx.user_id, jd_text]
+            vals = [user_id, jd_text]
             for k, v in fields.items():
                 cols.append(k)
                 vals.append(json.dumps(v) if isinstance(v, (list, dict)) else v)

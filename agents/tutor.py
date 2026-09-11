@@ -1,55 +1,70 @@
-"""Tutor agent — explains concepts at the user's level.
+"""Tutor agent — explains concepts at the learner's level, with memory.
 
-Loads the relevant skill markdown for the current topic, prepends it to the
-system prompt, adapts to user_background, and appends each exchange to
-session_history on the shared context.
+Stateless: the caller passes a LearnerContext (profile, performance, prior
+sessions) and the current conversation's message history. The system prompt
+carries the skill markdown for the topic as ground truth.
 """
-from agents.base import load_skill, call_claude, stream_claude
-from context.shared_context import SharedContext
+from __future__ import annotations
 
-SYSTEM = """You are an expert interview tutor for {domain}.
-Explain concepts clearly and adapt to the learner's level.
+import config
+from agents.base import load_skill, stream_claude
+from context.learner import LearnerContext
 
-Learner background: {background}
+HISTORY_WINDOW = 30  # messages sent per turn; older turns are dropped
 
-Use the reference material below as ground truth. Be concrete, use small
-examples, and check understanding. Keep answers focused — this is interview
-prep, not a textbook.
+SYSTEM = """You are an expert interview tutor for {domain}, coaching one learner
+one-on-one over many sessions. Today's topic: {topic}.
 
-=== REFERENCE MATERIAL ({topic}) ===
+## The learner
+{profile}
+
+## Their mock-interview record in this domain
+{performance}
+
+## Earlier tutoring sessions on this topic
+{prior_sessions}
+
+## How to teach
+- Teach the way a senior engineer mentors: concrete, precise, no filler. Use small
+  examples, commands, or diagrams in text where they help.
+- Adapt depth to the learner's level and to the interview timeline above. Close to the
+  interview, prioritise what is most likely to be asked.
+- When their record shows weak rubric dimensions, connect explanations back to those
+  gaps without being preachy about it.
+- After explaining something non-trivial, check understanding with one short question,
+  then wait. Do not stack several questions.
+- If they ask for a practice question, give one and coach them through it; if they
+  want a scored mock, tell them to use the Mock page.
+- Use Markdown. Code in fenced blocks with a language tag.
+
+## Reference material ({topic}) — treat as ground truth
 {skill}
-=== END REFERENCE ==="""
+"""
 
 
 class Tutor:
-    def _prepare(self, ctx: SharedContext, user_input: str) -> str:
-        """Build the system prompt for the current topic and record the user turn."""
-        topic = ctx.current_topic or "general"
-        skill = load_skill(topic)
-        domain = ctx.current_domain
-        domain_label = {"pe": "Production Engineering / SRE",
-                        "ne": "Network Engineering"}.get(domain, domain)
-        system = SYSTEM.format(
-            domain=domain_label,
-            background=ctx.user_background or "unknown — ask if it matters",
-            topic=topic,
-            skill=skill or "(no specific reference loaded)",
+    def system_prompt(self, ctx: LearnerContext) -> str:
+        skill = load_skill(ctx.topic) or "(no reference file for this topic)"
+        return SYSTEM.format(
+            domain=ctx.domain_label,
+            topic=ctx.topic_label,
+            profile=ctx.profile_text(),
+            performance=ctx.performance_text(),
+            prior_sessions=ctx.prior_sessions_text(),
+            skill=skill,
         )
-        ctx.add_exchange("user", user_input)
-        return system
 
-    def respond(self, ctx: SharedContext, user_input: str) -> str:
-        system = self._prepare(ctx, user_input)
-        # Send recent history so the tutor has continuity.
-        reply = call_claude(system, ctx.session_history[-12:])
-        ctx.add_exchange("assistant", reply)
-        return reply
+    def stream_reply(self, ctx: LearnerContext, history: list[dict], user_input: str):
+        """Yield reply text deltas. `history` excludes the new user message."""
+        messages = [{"role": m["role"], "content": m["content"]}
+                    for m in history[-HISTORY_WINDOW:]]
+        messages.append({"role": "user", "content": user_input})
+        yield from stream_claude(self.system_prompt(ctx), messages,
+                                 max_tokens=config.MAX_TOKENS_CHAT,
+                                 effort=config.EFFORT_CHAT, model=ctx.model)
 
-    def respond_stream(self, ctx: SharedContext, user_input: str):
-        """Yield reply text deltas; record the full assistant turn at the end."""
-        system = self._prepare(ctx, user_input)
-        chunks = []
-        for piece in stream_claude(system, ctx.session_history[-12:]):
-            chunks.append(piece)
-            yield piece
-        ctx.add_exchange("assistant", "".join(chunks))
+    @staticmethod
+    def title_from(first_message: str) -> str:
+        """A conversation title from the learner's first message. No API call."""
+        text = " ".join(first_message.split())
+        return (text[:57] + "…") if len(text) > 60 else text or "New session"

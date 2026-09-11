@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Review questions · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Review queue — {{ DOMAINS[domain] }} <span class="muted">({{ total }} pending)</span></h1>
+  <div class="actions"><a class="btn" href="/questions?domain={{ domain }}">← Question bank</a></div>
+</header>
+{% if request.query_params.get('generated') is not none %}
+  <div class="banner ok">Generated {{ request.query_params.get('generated') }} new candidate(s). Approve the ones you want in your mocks.</div>
+{% endif %}
+{% if request.query_params.get('promoted') %}
+  <div class="banner ok">Approved as <a href="/questions/q/{{ request.query_params.get('promoted') }}">{{ request.query_params.get('promoted') }}</a> — written to the bank.</div>
+{% endif %}
+<p class="muted">Candidates come from the generator and the scraper. Approving writes a markdown file into <code>question_bank/questions/</code>; nothing reaches mocks before that. Tighten the coverage points — scoring checks each one.</p>
+
+{% if not by_topic %}
+  <div class="card"><p class="muted">Queue is empty. Generate more from the <a href="/questions?domain={{ domain }}">question bank</a> page.</p></div>
+{% endif %}
+{% for topic, cands in by_topic.items() %}
+  <section class="card">
+    <h2>{{ topic | topic }} <span class="muted">({{ cands | length }})</span></h2>
+    {% for c in cands %}
+      <details class="q" id="c{{ c.id }}">
+        <summary><span class="pill {{ c.difficulty }}">{{ c.difficulty }}</span>
+          {% if c.quality_score is not none %}<span class="score s{{ c.quality_score }}">{{ c.quality_score }}</span>{% endif %}
+          {{ c.prompt }} <span class="muted small">· {{ c.source }}{% if not c.covers %} · needs coverage points{% endif %}</span></summary>
+        <form method="post" action="/api/questions/{{ c.id }}/update" class="stack q-notes">
+          <input type="hidden" name="domain" value="{{ domain }}">
+          {% with q=c, topics=TOPICS[domain] %}{% include "_question_fields.html" %}{% endwith %}
+          <div class="actions">
+            <button class="btn primary" type="submit" name="approve" value="1">Save &amp; approve</button>
+            <button class="btn" type="submit">Save only</button>
+            <button class="btn small" type="submit" formaction="/api/questions/{{ c.id }}/reject" formnovalidate onclick="return confirm('Delete this candidate?')">Reject</button>
+          </div>
+        </form>
+      </details>
+    {% endfor %}
+  </section>
+{% endfor %}
+
+{% if approved_recent %}
+<section class="card">
+  <h2>Recently approved <span class="muted">(in the bank)</span></h2>
+  {% for c in approved_recent %}
+    <div class="q">
+      <span class="pill {{ c.difficulty }}">{{ c.difficulty }}</span>
+      {% if c.promoted_id %}<a href="/questions/q/{{ c.promoted_id }}">{{ c.promoted_id }}</a> · {% endif %}{{ c.prompt }}
+      <form method="post" action="/api/questions/{{ c.id }}/unapprove" style="display:inline">
+        <input type="hidden" name="domain" value="{{ domain }}"><button class="btn small" type="submit">back to queue</button></form>
+    </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

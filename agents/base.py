@@ -1,8 +1,12 @@
 """Shared agent helpers: Anthropic client, skill loading, Claude calls.
 
-Keeps every agent thin. In Phase 3 get_client() will be swapped to decrypt a
-per-user Fernet key; for now it uses the single key from config.
+Every call sends the large, static system prompt (skill markdown + persona) as
+a cache-controlled block so repeated turns on the same topic re-bill the prefix
+at the cached rate. Adaptive thinking is on for every call; `effort` trades
+depth for latency per call site.
 """
+from __future__ import annotations
+
 from functools import lru_cache
 
 import anthropic
@@ -10,12 +14,14 @@ import anthropic
 import config
 
 
+class ClaudeError(RuntimeError):
+    """A user-presentable failure talking to Claude."""
+
+
 @lru_cache(maxsize=1)
 def get_client() -> anthropic.Anthropic:
     if not config.ANTHROPIC_API_KEY:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key."
-        )
+        raise ClaudeError("ANTHROPIC_API_KEY is not set. Add it to .env and restart the app.")
     return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
@@ -26,49 +32,76 @@ def load_skill(topic: str) -> str:
     if not rel:
         return ""
     path = config.SKILLS_DIR / rel
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def call_claude(system: str, messages: list[dict],
-                max_tokens: int = config.MAX_TOKENS) -> str:
-    """One text-in/text-out call to Claude. messages = [{role, content}, ...].
-
-    The system prompt (which carries the large, static skill-file content) is
-    sent as a cache-controlled block. Repeated calls within the cache window
-    re-bill that prefix at ~10% — meaningful since every turn in a topic
-    prepends the same skill markdown.
-    """
-    resp = get_client().messages.create(
-        model=config.MODEL_NAME,
+def _request(system: str, messages: list[dict], max_tokens: int, effort: str,
+             model: str | None) -> dict:
+    return dict(
+        model=model or config.DEFAULT_MODEL,
         max_tokens=max_tokens,
-        system=[{
-            "type": "text",
-            "text": system,
-            "cache_control": {"type": "ephemeral"},
-        }],
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         messages=messages,
+        thinking={"type": "adaptive"},
+        output_config={"effort": effort},
     )
+
+
+def _friendly(exc: Exception) -> ClaudeError:
+    if isinstance(exc, anthropic.AuthenticationError):
+        return ClaudeError("Anthropic rejected the API key. Check ANTHROPIC_API_KEY in .env.")
+    if isinstance(exc, anthropic.NotFoundError):
+        return ClaudeError("The selected model was not found. Pick another model in Settings.")
+    if isinstance(exc, anthropic.RateLimitError):
+        return ClaudeError("Rate limited by Anthropic. Wait a moment and try again.")
+    if isinstance(exc, anthropic.APIStatusError):
+        return ClaudeError(f"Anthropic API error {exc.status_code}: {exc.message}")
+    if isinstance(exc, anthropic.APIConnectionError):
+        return ClaudeError("Could not reach the Anthropic API. Check your network.")
+    return ClaudeError(str(exc))
+
+
+def call_claude(system: str, messages: list[dict], max_tokens: int = config.MAX_TOKENS_LONG,
+                effort: str = config.EFFORT_SCORE, model: str | None = None) -> str:
+    """One text-in/text-out call. Raises ClaudeError on failure, refusal, or truncation.
+
+    Uses the streaming transport under the hood so large max_tokens (scoring,
+    generation, enrichment) never trip HTTP timeouts; callers still get a string.
+    """
+    try:
+        with get_client().messages.stream(
+                **_request(system, messages, max_tokens, effort, model)) as stream:
+            resp = stream.get_final_message()
+    except anthropic.APIError as exc:
+        raise _friendly(exc) from exc
+    if resp.stop_reason == "refusal":
+        raise ClaudeError("Claude declined to answer this request.")
+    if resp.stop_reason == "max_tokens":
+        raise ClaudeError(f"Response was cut off at {max_tokens} tokens; ask for a smaller batch.")
     return "".join(block.text for block in resp.content if block.type == "text")
 
 
-def stream_claude(system: str, messages: list[dict],
-                  max_tokens: int = config.MAX_TOKENS):
-    """Same call as call_claude, but yields text deltas as they arrive.
+def stream_claude(system: str, messages: list[dict], max_tokens: int = config.MAX_TOKENS_CHAT,
+                  effort: str = config.EFFORT_CHAT, model: str | None = None):
+    """Yield text deltas as they arrive. Callers accumulate for the full reply."""
+    try:
+        with get_client().messages.stream(
+                **_request(system, messages, max_tokens, effort, model)) as stream:
+            for text in stream.text_stream:
+                yield text
+            final = stream.get_final_message()
+            if final.stop_reason == "refusal":
+                raise ClaudeError("Claude declined to continue this conversation.")
+    except anthropic.APIError as exc:
+        raise _friendly(exc) from exc
 
-    For UIs that render token-by-token (st.write_stream). Callers that need the
-    full text should accumulate the yielded pieces.
-    """
-    with get_client().messages.stream(
-        model=config.MODEL_NAME,
-        max_tokens=max_tokens,
-        system=[{
-            "type": "text",
-            "text": system,
-            "cache_control": {"type": "ephemeral"},
-        }],
-        messages=messages,
-    ) as stream:
-        for text in stream.text_stream:
-            yield text
+
+def check_model(model: str) -> tuple[bool, str]:
+    """Metadata-only check that the key works and the model exists. No token cost."""
+    try:
+        m = get_client().models.retrieve(model)
+        return True, f"API key valid; model '{m.id}' reachable."
+    except ClaudeError as exc:
+        return False, str(exc)
+    except anthropic.APIError as exc:
+        return False, str(_friendly(exc))

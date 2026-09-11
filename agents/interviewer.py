@@ -1,15 +1,18 @@
-"""Mock Interviewer agent — conducts mocks turn by turn, then scores.
+"""Mock Interviewer agent — conducts a mock turn by turn, then scores it.
 
-Pulls a question from the bank (filtering out already-covered ones via
-performance_data), runs the mock conversationally, and at the end produces a
-structured rubric score that is written to performance_data and persisted to
-the scores table.
+Stateless: the mock's question and transcript live in the `mocks` table
+(db.repo). This module only builds prompts, streams turns, and produces the
+rubric score. That makes a mock resumable after a refresh, crash, or restart.
 """
-import json
+from __future__ import annotations
 
-from agents.base import load_skill, call_claude, stream_claude
-from context.shared_context import SharedContext
-from question_bank.questions import get_questions, get_question_by_id
+import json
+import random
+
+import config
+from agents.base import call_claude, load_skill, stream_claude
+from context.learner import LearnerContext
+from question_bank.questions import get_questions
 
 # Rubric dimensions per topic. Each scored 0-10 at the end of a mock.
 RUBRICS = {
@@ -32,7 +35,6 @@ RUBRICS = {
         "requirements_gathering", "scale_estimation", "component_design",
         "failure_mode_analysis", "tradeoff_articulation", "observability",
     ],
-    # --- Network Engineering rubrics ---
     "network_troubleshooting": [
         "layer_isolation", "tool_selection", "protocol_knowledge",
         "blast_radius_awareness", "root_cause_precision", "fix_and_prevention",
@@ -54,164 +56,170 @@ RUBRICS = {
         "root_cause_precision", "fix_and_prevention",
     ],
 }
-
-# Default rubric if a topic isn't mapped above.
 DEFAULT_RUBRIC = ["correctness", "reasoning_clarity", "depth", "communication"]
 
-CONDUCT_SYSTEM = """You are a rigorous but fair {domain} mock interviewer at a top tech company.
+TRANSCRIPT_WINDOW = 40
 
-You are conducting a mock on this question:
+CONDUCT_SYSTEM = """You are a rigorous but fair {domain} interviewer at a top tech company,
+running a {difficulty} mock on the topic "{topic}".
+
+Candidate profile: {profile}
+
+The question you asked:
 ---
 {question}
 ---
-Expected-answer notes (for YOU only, never reveal directly): {notes}
+For YOU only — never reveal these directly:
+What interviewers look for: {look_for}
+A strong answer covers:
+{covers}
+Follow-ups to use when the candidate is doing well (or to test depth), in your own words:
+{follow_ups}
 
 Rules:
-- Act like a real interviewer. Let the candidate drive. Ask probing follow-ups.
-- Do NOT give away the answer. {hint_rule}
-- One step at a time. Wait for their response before moving on.
-- If they're stuck, nudge with a question, not the solution.
-- Keep your turns short.
+- Behave like a real interviewer. Let the candidate drive; ask probing follow-ups that
+  test depth ("why that?", "what if X fails?", "what does that cost?").
+- Never give away the answer. {hint_rule}
+- One step at a time: ask one thing, then stop and wait. Keep your turns short (2-6 lines).
+- If the candidate is vague, ask for specifics: exact commands, numbers, concrete designs.
+- If they say they are done or ask to be scored, tell them to click "Finish & score".
+- Plain text or light Markdown. No score, no verdict, no summary during the mock.
 
 Reference material you may quietly draw on:
-{skill}"""
+{skill}
+"""
 
-SCORE_SYSTEM = """You are scoring a completed {domain} mock interview.
-Score each rubric dimension from 0-10 with one short justification grounded in
-what the candidate actually said. Be honest — unearned high scores don't help them.
+SCORE_SYSTEM = """You are scoring a completed {domain} mock interview ({difficulty}) on "{topic}".
+Score each rubric dimension from 0-10, with one short justification grounded in what
+the candidate actually said. Be honest and calibrated: 5 is a borderline hire, 8+ is
+a clear strong hire signal, and unearned high scores do not help the candidate.
+If a dimension was never exercised, score it low and say so in the note.
 
-Return ONLY valid JSON in exactly this shape:
+Return ONLY valid JSON in exactly this shape, no prose around it:
 {{
   "dimensions": {{ "<dimension>": {{"score": <0-10>, "note": "<short>"}}, ... }},
-  "total": <average of scores, one decimal>,
+  "coverage": [ {{"point": "<coverage point, copied>", "covered": true|false, "note": "<where/why>"}}, ... ],
+  "total": <average of the dimension scores, one decimal>,
   "summary": "<2-3 sentence overall assessment>",
-  "top_fix": "<the single highest-leverage thing to improve>"
+  "top_fix": "<the single highest-leverage thing to improve>",
+  "model_answer": "<compact outline of what a strong answer would have covered, 4-8 bullet lines>"
 }}
 
-Dimensions to score: {dimensions}"""
+Dimensions to score: {dimensions}
+
+Coverage points to check, one entry each, in order:
+{covers}"""
 
 
 class Interviewer:
-    def __init__(self):
-        self.active = False
-        self.question: dict | None = None
-        self.transcript: list[dict] = []
-        self.topic: str | None = None
+    # ---- question selection ---------------------------------------------
+    @staticmethod
+    def pick_question(domain: str, topic: str, difficulty: str | None,
+                      exclude_ids: set[str], rng: random.Random | None = None) -> dict | None:
+        rng = rng or random.Random()
+        pool = get_questions(domain=domain, topic=topic, exclude_ids=exclude_ids)
+        if difficulty and difficulty != "any":
+            wanted = [q for q in pool if q["difficulty"] == difficulty]
+            pool = wanted or pool
+        if not pool:  # everything covered — allow repeats rather than dead-end
+            pool = get_questions(domain=domain, topic=topic)
+            if difficulty and difficulty != "any":
+                pool = [q for q in pool if q["difficulty"] == difficulty] or pool
+        return rng.choice(pool) if pool else None
 
-    # ---- lifecycle ----
-    def start_mock(self, ctx: SharedContext, topic: str, hints: bool = False) -> str:
-        seen = self._covered_ids(ctx)
-        candidates = get_questions(domain=ctx.current_domain, topic=topic, exclude_ids=seen)
-        if not candidates:
-            # Everything covered — allow repeats rather than dead-end.
-            candidates = get_questions(domain=ctx.current_domain, topic=topic)
-        if not candidates:
-            return f"No questions available for {ctx.current_domain}/{topic} yet."
-
-        self.question = candidates[0]
-        self.topic = topic
-        self.active = True
-        self.hints = hints
-        self.transcript = []
-
-        domain_label = {"pe": "Production Engineering / SRE",
-                        "ne": "Network Engineering"}.get(ctx.current_domain, ctx.current_domain)
-        opener = (f"**Mock started — {domain_label} / {topic}** "
-                  f"(say `done` when you want to finish and be scored)\n\n"
-                  f"**Interviewer:** {self.question['prompt']}")
-        self.transcript.append({"role": "assistant", "content": self.question["prompt"]})
-        return opener
-
-    def _conduct_system(self, ctx: SharedContext) -> str:
-        skill = load_skill(self.topic)
-        domain_label = {"pe": "Production Engineering / SRE",
-                        "ne": "Network Engineering"}.get(ctx.current_domain, ctx.current_domain)
-        hint_rule = ("Hints are ON: you may give a gentle directional hint if they're stuck."
-                     if getattr(self, "hints", False)
-                     else "Hints are OFF: do not hint unless they explicitly ask.")
+    # ---- prompts --------------------------------------------------------
+    def conduct_prompt(self, ctx: LearnerContext, mock: dict) -> str:
+        q = mock["question"]
+        hint_rule = ("Hints are ON: if they are stuck, give one gentle directional hint."
+                     if mock.get("hints") else
+                     "Hints are OFF: do not hint unless they explicitly ask for one.")
         return CONDUCT_SYSTEM.format(
-            domain=domain_label, question=self.question["prompt"],
-            notes=self.question["expected_answer_notes"], skill=skill or "(none)",
-            hint_rule=hint_rule,
+            domain=ctx.domain_label, topic=ctx.topic_label, difficulty=mock["difficulty"],
+            profile=ctx.profile_text(), question=q["prompt"],
+            look_for=_join(q.get("look_for")) or "(not specified)",
+            covers=_numbered(q.get("covers")) or q.get("expected_answer_notes", ""),
+            follow_ups=_bulleted(q.get("follow_ups")) or "(improvise)",
+            hint_rule=hint_rule, skill=load_skill(mock["topic"]) or "(none)",
         )
 
-    def turn(self, ctx: SharedContext, user_input: str) -> str:
-        if not self.active or not self.question:
-            return "No mock in progress. Say 'start a mock' first."
-        system = self._conduct_system(ctx)
-        self.transcript.append({"role": "user", "content": user_input})
-        reply = call_claude(system, self.transcript[-16:])
-        self.transcript.append({"role": "assistant", "content": reply})
-        return reply
+    @staticmethod
+    def api_messages(transcript: list[dict], user_input: str | None = None) -> list[dict]:
+        """Transcript -> Messages API list. The stored transcript starts with the
+        interviewer's question (assistant), so a synthetic user opener goes first."""
+        msgs = [{"role": "user", "content": "I'm ready. Please ask the question."}]
+        msgs += [{"role": m["role"], "content": m["content"]}
+                 for m in transcript[-TRANSCRIPT_WINDOW:]]
+        if user_input is not None:
+            msgs.append({"role": "user", "content": user_input})
+        return msgs
 
-    def turn_stream(self, ctx: SharedContext, user_input: str):
-        """Yield interviewer reply deltas; record the full turn at the end."""
-        if not self.active or not self.question:
-            yield "No mock in progress. Say 'start a mock' first."
-            return
-        system = self._conduct_system(ctx)
-        self.transcript.append({"role": "user", "content": user_input})
-        chunks = []
-        for piece in stream_claude(system, self.transcript[-16:]):
-            chunks.append(piece)
-            yield piece
-        self.transcript.append({"role": "assistant", "content": "".join(chunks)})
+    # ---- turns ----------------------------------------------------------
+    def stream_turn(self, ctx: LearnerContext, mock: dict, user_input: str):
+        yield from stream_claude(
+            self.conduct_prompt(ctx, mock),
+            self.api_messages(mock["transcript"], user_input),
+            max_tokens=config.MAX_TOKENS_CHAT, effort=config.EFFORT_CHAT, model=ctx.model)
 
-    def finish_mock(self, ctx: SharedContext) -> dict:
-        if not self.active or not self.question:
-            return {"error": "No mock in progress."}
-
-        dims = RUBRICS.get(self.topic, DEFAULT_RUBRIC)
-        domain_label = {"pe": "Production Engineering / SRE",
-                        "ne": "Network Engineering"}.get(ctx.current_domain, ctx.current_domain)
-        system = SCORE_SYSTEM.format(domain=domain_label, dimensions=", ".join(dims))
-        convo = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in self.transcript)
+    # ---- scoring --------------------------------------------------------
+    def score(self, ctx: LearnerContext, mock: dict) -> dict:
+        dims = RUBRICS.get(mock["topic"], DEFAULT_RUBRIC)
+        q = mock["question"]
+        system = SCORE_SYSTEM.format(
+            domain=ctx.domain_label, topic=ctx.topic_label, difficulty=mock["difficulty"],
+            dimensions=", ".join(dims),
+            covers=_numbered(q.get("covers")) or q.get("expected_answer_notes", ""))
+        convo = "\n\n".join(
+            f"{'INTERVIEWER' if m['role'] == 'assistant' else 'CANDIDATE'}: {m['content']}"
+            for m in mock["transcript"])
         raw = call_claude(
             system,
-            [{"role": "user", "content": f"Question:\n{self.question['prompt']}\n\n"
-                                          f"Transcript:\n{convo}\n\nScore it now."}],
-        )
-        score = self._parse_json(raw)
-        score["question_id"] = self.question["id"]
-        score["topic"] = self.topic
-        score["domain"] = ctx.current_domain
-
-        ctx.record_score(ctx.current_domain, self.topic, score)
-        self._persist(ctx, score)
-
-        self.active = False
+            [{"role": "user", "content":
+              f"Question:\n{q['prompt']}\n\n"
+              f"What interviewers look for: {_join(q.get('look_for')) or '(n/a)'}\n\n"
+              f"Transcript:\n{convo}\n\nScore it now."}],
+            max_tokens=config.MAX_TOKENS_LONG, effort=config.EFFORT_SCORE, model=ctx.model)
+        score = parse_json_object(raw)
+        score.setdefault("dimensions", {})
+        score["total"] = _coerce_total(score, dims)
+        cov = [c for c in (score.get("coverage") or []) if isinstance(c, dict)]
+        score["coverage"] = cov
+        if cov:
+            score["coverage_hit"] = sum(1 for c in cov if c.get("covered"))
+            score["coverage_total"] = len(cov)
         return score
 
-    # ---- helpers ----
-    @staticmethod
-    def _covered_ids(ctx: SharedContext) -> set:
-        ids = set()
-        for topics in ctx.performance_data.values():
-            for scores in topics.values():
-                for s in scores:
-                    if s.get("question_id"):
-                        ids.add(s["question_id"])
-        return ids
 
-    @staticmethod
-    def _parse_json(raw: str) -> dict:
-        try:
-            start, end = raw.index("{"), raw.rindex("}") + 1
-            return json.loads(raw[start:end])
-        except (ValueError, json.JSONDecodeError):
-            return {"error": "Could not parse score", "raw": raw}
+def parse_json_object(raw: str) -> dict:
+    try:
+        start, end = raw.index("{"), raw.rindex("}") + 1
+        return json.loads(raw[start:end])
+    except (ValueError, json.JSONDecodeError):
+        return {"error": "Could not parse score", "raw": raw}
 
-    @staticmethod
-    def _persist(ctx: SharedContext, score: dict) -> None:
-        """Best-effort write to the scores table; never crash the mock on DB error."""
+
+def _coerce_total(score: dict, dims: list[str]) -> float | None:
+    vals = []
+    for d in dims:
+        detail = score["dimensions"].get(d) or {}
         try:
-            from db.connection import get_cursor
-            with get_cursor(commit=True) as cur:
-                cur.execute(
-                    "INSERT INTO scores (user_id, domain, topic, question_id, rubric, total) "
-                    "VALUES (%s, %s, %s, %s, %s, %s)",
-                    (ctx.user_id, score.get("domain"), score.get("topic"),
-                     score.get("question_id"), json.dumps(score), score.get("total")),
-                )
-        except Exception as e:  # pragma: no cover - DB optional in early dev
-            print(f"  [warn] could not persist score to DB: {e}")
+            vals.append(float(detail.get("score")))
+        except (TypeError, ValueError):
+            pass
+    if vals:
+        return round(sum(vals) / len(vals), 1)
+    try:
+        return round(float(score.get("total")), 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def _join(items) -> str:
+    return "; ".join(str(i).strip() for i in (items or []) if str(i).strip())
+
+
+def _numbered(items) -> str:
+    return "\n".join(f"{n}. {str(i).strip()}" for n, i in enumerate(items or [], 1) if str(i).strip())
+
+
+def _bulleted(items) -> str:
+    return "\n".join(f"- {str(i).strip()}" for i in (items or []) if str(i).strip())

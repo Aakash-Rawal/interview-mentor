@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Edit question · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1><span class="pill {{ q.difficulty }}">{{ q.difficulty }}</span> {{ q.id }} <span class="muted small">{{ path }}</span></h1>
+  <div class="actions">
+    <a class="btn" href="/questions?domain={{ q.domain }}&topic={{ q.topic }}">← Question bank</a>
+    <a class="btn" href="/mock?domain={{ q.domain }}&topic={{ q.topic }}">Mock this topic</a>
+  </div>
+</header>
+{% if saved %}<div class="banner ok">Saved to the bank file.</div>{% endif %}
+<p class="muted small">{{ q.topic | topic }} · source {{ q.source }} · added {{ q.created | dt }}. Edits are written straight to the markdown file.</p>
+<form method="post" action="/api/questions/file/{{ q.id }}" class="card stack">
+  {% with topics=None %}{% include "_question_fields.html" %}{% endwith %}
+  <div class="actions">
+    <button class="btn primary" type="submit">Save</button>
+    <button class="btn small" type="submit" formaction="/api/questions/file/{{ q.id }}/delete" formnovalidate onclick="return confirm('Remove this question from the bank? If it came from the review queue it goes back there.')">Remove from bank</button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}<script>IM.renderAll();</script>{% endblock %}

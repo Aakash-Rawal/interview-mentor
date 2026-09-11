@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Learn · Interview Mentor{% endblock %}
+{% block content %}
+<div class="split">
+  <aside class="list">
+    <form method="post" action="/api/conversations" class="stack">
+      <input type="hidden" name="domain" value="{{ domain }}">
+      <label>Topic
+        <select name="topic">
+          {% for t in TOPICS[domain] %}<option value="{{ t }}" {{ 'selected' if t == topic else '' }}>{{ t | topic }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="btn primary" type="submit">New session</button>
+    </form>
+    <h3>Sessions</h3>
+    {% if conversations %}
+      <ul class="plain">
+      {% for c in conversations %}
+        <li class="{{ 'on' if conversation and c.id == conversation.id else '' }}">
+          <a href="/learn/{{ c.id }}">{{ c.title }}</a>
+          <div class="muted small">{{ c.topic | topic }} · {{ c.message_count }} msgs · {{ c.updated_at | dt }}</div>
+        </li>
+      {% endfor %}
+      </ul>
+    {% else %}<p class="muted">No sessions yet. Start one above.</p>{% endif %}
+  </aside>
+
+  <section class="chat-pane">
+    {% if conversation %}
+      <header class="chat-head">
+        <div>
+          <strong>{{ conversation.title }}</strong>
+          <div class="muted small">{{ DOMAINS[conversation.domain] }} · {{ conversation.topic | topic }}</div>
+        </div>
+        <form method="post" action="/api/conversations/{{ conversation.id }}/archive" onsubmit="return confirm('Archive this session?')">
+          <button class="btn small" type="submit">Archive</button>
+        </form>
+      </header>
+      <div id="log" class="log">
+        {% for m in messages %}
+          <div class="msg {{ m.role }}"><div class="bubble md">{{ m.content }}</div></div>
+        {% endfor %}
+        {% if not messages %}
+          <div class="empty">Ask anything about <strong>{{ conversation.topic | topic }}</strong>. The tutor knows your profile, your mock scores, and your earlier sessions on this topic.</div>
+        {% endif %}
+      </div>
+      <form id="chat-form" class="composer" data-endpoint="/api/conversations/{{ conversation.id }}/messages">
+        <textarea id="chat-input" name="text" rows="2" placeholder="Ask the tutor… (Enter to send, Shift+Enter for a new line)" autofocus></textarea>
+        <button class="btn primary" type="submit" id="send-btn">Send</button>
+      </form>
+    {% else %}
+      <div class="empty tall">
+        <h2>Study with the tutor</h2>
+        <p>Pick a topic and start a session. Sessions are saved, so you can pick up where you left off, and the tutor remembers what you have covered and where your mocks were weak.</p>
+      </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  IM.renderAll();
+  {% if conversation %}
+  IM.setupChat({ form: '#chat-form', input: '#chat-input', log: '#log', button: '#send-btn',
+                 onFirstReply: () => { if (!{{ 'true' if messages else 'false' }}) location.reload(); } });
+  {% endif %}
+</script>
+{% endblock %}

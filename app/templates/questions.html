@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Question bank · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Question bank — {{ DOMAINS[domain] }}</h1>
+  <div class="actions">
+    <a class="btn {{ 'primary' if pending else '' }}" href="/questions/review?domain={{ domain }}">Review queue{% if pending %} ({{ pending }}){% endif %}</a>
+  </div>
+</header>
+<section class="card">
+  <form method="post" action="/api/questions/generate" class="actions" id="gen-form">
+    <input type="hidden" name="domain" value="{{ domain }}">
+    <label>Generate for<select name="topic">{% for t in TOPICS[domain] %}<option value="{{ t }}" {{ 'selected' if t == topic else '' }}>{{ t | topic }}</option>{% endfor %}</select></label>
+    <label>How many<select name="count">{% for n in [5, 8, 10, 12, 15] %}<option value="{{ n }}" {{ 'selected' if n == 10 else '' }}>{{ n }}</option>{% endfor %}</select></label>
+    <button class="btn primary" type="submit" id="gen-btn">Generate with Claude</button>
+    <span class="muted small">Takes 30–90 s. New questions go to the review queue, not straight into mocks. The generator sees the topic's skill file and every existing prompt so it does not repeat them.</span>
+  </form>
+</section>
+{% for e in bank_errors %}<div class="banner warn">Could not load a question file: {{ e }}</div>{% endfor %}
+<p class="muted">{{ total }} questions in this domain, stored as markdown under <code>question_bank/questions/</code>. Questions you have been scored on are marked; ones added in the last two weeks are flagged <span class="pill">new</span>. Expand one to see what a strong answer covers — but try it as a mock first.</p>
+{% for topic, qs in by_topic.items() %}
+  <section class="card">
+    <h2>{{ topic | topic }} <span class="muted">({{ qs | length }})</span>
+      <a class="btn small" href="/mock?domain={{ domain }}&topic={{ topic }}">mock this topic</a></h2>
+    {% for q in qs %}
+      <details class="q {{ 'covered' if q.id in covered else '' }}" id="{{ q.id }}">
+        <summary><span class="pill {{ q.difficulty }}">{{ q.difficulty }}</span> {{ q.prompt }}
+          {% if q.created and q.created >= new_since and q.source != 'seed' %}<span class="pill">new</span>{% endif %}
+          {% if q.id in covered %}<span class="muted small">· done</span>{% endif %}</summary>
+        <div class="q-notes">
+          {% include "_question_body.html" %}
+          <div class="muted small">tags: {{ q.tags | join(', ') }}{% if q.companies %} · companies: {{ q.companies | join(', ') }}{% endif %} · {{ q.source }} · {{ q.id }} · <a href="/questions/q/{{ q.id }}">edit</a></div>
+        </div>
+      </details>
+    {% endfor %}
+  </section>
+{% endfor %}
+{% endblock %}
+{% block scripts %}
+<script>
+  IM.renderAll();
+  document.getElementById('gen-form').addEventListener('submit', () => {
+    const b = document.getElementById('gen-btn'); b.disabled = true; b.textContent = 'Generating…';
+  });
+</script>
+{% endblock %}

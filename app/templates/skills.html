@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Skill files · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head"><h1>Skill files</h1></header>
+<p class="muted">These markdown files are prepended to every tutor and interviewer prompt as ground truth, and the question generator reads them too. Edit them here or in any editor under <code>skills/</code>. Changes apply on the next message.</p>
+<section class="card">
+  <table class="table">
+    <thead><tr><th>Topic</th><th>Domain</th><th>File</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+    {% for s in skills %}
+      <tr><td><a href="/skills/{{ s.topic }}">{{ s.label }}</a></td><td>{{ s.domain | upper }}</td>
+          <td><code>{{ s.rel }}</code></td><td>{{ s.words }} words</td>
+          <td class="right"><a href="/skills/{{ s.topic }}">edit</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section class="card">
+  <h2>What makes a skill file useful</h2>
+  <p>The model already knows the facts. A skill file earns its place by <strong>steering</strong>: what this interview actually tests, the checklists and frameworks to answer in, common candidate mistakes, the numbers and commands worth memorising, and company-specific emphasis. Keep it dense and opinionated; drop textbook prose.</p>
+</section>
+{% endblock %}

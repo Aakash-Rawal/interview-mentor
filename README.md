@@ -1,91 +1,106 @@
-# Interview Mentor — Multi-Agent Prep Platform
+# Interview Mentor
 
-A multi-agent AI platform for **Production Engineering (PE/SRE)** and
-**Network Engineering (NE)** interview prep, plus a **Resume / ATS** assistant.
-Agents share one `SharedContext` so the system behaves like a coach, not five
-isolated bots.
+A local web app for software-engineering interview prep: **Production Engineering / SRE**
+(coding, Linux, troubleshooting, system design) and **Network Engineering** (fundamentals,
+routing, troubleshooting, design, security). Two agents share one picture of you:
 
-> Adapted from the original PE-only build plan. Added: the Network Engineering
-> domain, and a Resume/ATS assistant (analyze · tailor · cover letter).
+- **Tutor** — topic-aware coaching that remembers your profile, your mock scores, and your
+  earlier sessions on the same topic.
+- **Interviewer** — one question at a time from a curated bank, probing follow-ups, then a
+  rubric score per dimension with a top fix and a model answer. Mocks are resumable.
 
-## Agents
-| Agent | What it does |
-|---|---|
-| Orchestrator | Routes every message; maintains domain + topic in SharedContext |
-| Tutor | Explains concepts at your level using markdown skill files |
-| Interviewer | Conducts mocks turn-by-turn, scores against a per-topic rubric |
-| Resume/ATS | Analyzes resume vs JD, tailors the resume, writes cover letters |
-| Resource (Phase 2) | Scheduled heartbeat that keeps the question bank fresh |
-| Progress Tracker (Phase 4) | Per-domain weak-area tracking + prep plans |
+Everything persists to PostgreSQL. The app runs as a macOS launchd agent, so it is always at
+**http://127.0.0.1:8765** — no terminal, no scripts, just open the URL (or the Dock launcher).
 
-## Domains & topics
-- **PE:** coding · linux · troubleshooting · system_design
-- **NE:** networking_fundamentals · routing · network_troubleshooting · network_design · network_security
-
-## Prerequisites
-- Python 3.11+
-- PostgreSQL 14+ (running locally)
+## Requirements
+- macOS, Python 3.11+
+- PostgreSQL (Homebrew: `brew install postgresql@18 && brew services start postgresql@18`)
 - An Anthropic API key
 
-PostgreSQL is **not** currently installed on this machine. Install it first:
-```bash
-brew install postgresql@16
-brew services start postgresql@16
-createdb interview_prep
-```
-
-## Setup
+## First-time setup
 ```bash
 cd interview_mentor
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env        # then edit .env with your key + DATABASE_URL
-python main.py
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+createdb interview_prep                       # once
+cp .env.example .env                          # then put your ANTHROPIC_API_KEY in .env
+scripts/install_launch_agent.sh               # starts at login, opens the browser
 ```
+The install script also creates `~/Applications/Interview Mentor.app`, a one-click launcher
+you can drag to the Dock. Logs go to `~/Library/Logs/interview-mentor.log`.
+
+To run in the foreground instead (development, auto-reload): `scripts/serve.sh`.
+To remove the background service: `scripts/uninstall_launch_agent.sh`.
 
 ## Using it
+1. **Settings** — fill in your experience, target roles, interview date, and pick a model.
+   The agents read this on every turn.
+2. **Learn** — pick a topic, start a session, ask anything. Sessions are saved and listed;
+   reopen one to continue.
+3. **Mock interview** — pick topic and difficulty, answer as you would out loud, then
+   *Finish & score*. You get per-dimension scores, a top fix, and what a strong answer covers.
+   Refreshing or closing the tab does not lose a mock.
+4. **Dashboard** — per-topic averages and trend, your weakest rubric dimensions, recent
+   mocks and sessions, days to interview.
+5. **Question bank** — browse every question, see which you have been scored on.
+
+Switch between PE and NE with the toggle at the top of the sidebar.
+
+## Layout
 ```
-> /domain ne
-> explain BGP path selection            # Tutor
-> start a mock                          # Interviewer (say 'done' to be scored)
-> /progress                             # score history
-> /resume                               # resume / ATS assistant
+app/                FastAPI app: routes/pages.py (HTML), routes/api.py (streaming + actions),
+                    templates/, static/ (plain CSS + one JS file, no build step)
+agents/             base.py (Claude client, caching, streaming), tutor.py, interviewer.py,
+                    resume_agent.py (importable; no UI page yet)
+context/learner.py  LearnerContext — the per-request snapshot every agent reads
+db/                 connection pool, schema (idempotent), repo.py (all queries)
+question_bank/      questions/ (the bank, one markdown file each), store.py (parser/writer),
+                    generator.py (Claude generation + enrichment), review.py (queue → file),
+                    scraper + pipeline (optional)
+skills/             markdown reference files prepended to prompts — edit to change what
+                    the tutor treats as ground truth
+scripts/            serve.sh, install/uninstall launch agent
+tests/              pytest: offline unit tests + web tests against local Postgres
 ```
 
-## Web UI
+## Models and cost
+Default model is `claude-opus-5`; `claude-sonnet-5` is selectable in Settings. Skill files
+and personas are sent as a cached system prefix, so repeated turns on one topic re-bill that
+part at the cached rate. Conversational turns use medium effort; scoring uses high effort.
 
-A local Streamlit app runs alongside the CLI, sharing the same config + database:
-
+## Tests
 ```bash
-streamlit run ui/app.py
+.venv/bin/python -m pytest -q
 ```
+Web tests use a separate `pytest-user` learner id and clean up after themselves. They skip
+if Postgres is unreachable. No test calls Claude.
 
-Three pages (sidebar nav):
-- **💬 Learn & Mock** — pick domain (PE/NE) + topic, then **Learn** (chat with the Tutor) or **Mock** (start a mock, answer turn by turn, finish to get a scored rubric). Mock scores persist to Postgres.
-- **📄 Resume Lab** — paste or upload (`.pdf/.docx/.txt`) your resume + a job description, then **Analyze (ATS)**, **Tailor resume**, or **Cover letter**; tailored output is downloadable.
-- **🛠 Control Panel** — Health (key validity, DB, skill files), Status (model, domains, question bank, live row counts), Settings (edit `.env`: `MODEL_NAME`, `ANTHROPIC_API_KEY`, `DATABASE_URL`).
+## The question bank
+Every question is a markdown file under `question_bank/questions/<domain>/<topic>/<id>.md` with
+YAML frontmatter (id, difficulty, tags, companies, source, created) and fixed sections:
+**Prompt**, **What interviewers look for**, **Strong answer covers**, **Follow-ups**, and an
+optional **Sample answer**. The format and authoring rules are in
+[question_bank/README.md](question_bank/README.md). The files are the source of truth; the
+database holds only the review queue and your mock history.
 
-The UI uses the same `local-user` as the CLI, so scores/sessions are unified. Restart after changing settings. (Phase 3 adds auth + multi-user + FastAPI between the UI and agents.)
+The interviewer uses the follow-ups as probes, scoring reports which coverage points you hit,
+and the sample answer is what you see after a mock.
 
-## Resume / ATS assistant
-`/resume` walks you through:
-1. Provide your resume (file path to `.pdf`/`.docx`/`.txt`, or paste).
-2. Paste the job description.
-3. Pick a mode:
-   - **analyze** — ATS match score + keyword gap report
-   - **tailor** — full rewrite weaving in missing keywords (never fabricates)
-   - **cover letter** — role-specific letter in your chosen tone
+### Growing it
+1. **Question bank → Generate with Claude.** Pick a topic and a count. The generator reads the
+   topic's skill file, the authoring rules, and every existing prompt so it does not repeat
+   them, and writes fully structured candidates into the **review queue**.
+2. **Review queue.** Edit any field, then *Save & approve* — that writes the markdown file with
+   the next id for the topic (`ne-routing-007`) and it is live in mocks immediately. *Back to
+   queue* removes the file again.
+3. **Edit existing questions** from the bank page (each has an edit link) or in any editor.
+   Questions added in the last two weeks are flagged new.
+4. **Skill files page.** The nine reference files feed the tutor, the interviewer and the
+   generator. Keep them opinionated: what the interview tests, frameworks, reference facts,
+   common mistakes, practice prompts.
+5. **Scraper (optional).** `python -m question_bank.pipeline --sources hackernews github`
+   pulls public-source candidates into the same review queue.
 
-Every analysis/tailor/letter is saved to the `applications` table so you can
-track what you sent where.
-
-## Build phases
-- **Phase 1 (this):** CLI — agents + Postgres + hardcoded question bank + resume assistant
-- **Phase 2:** ChromaDB semantic question bank + Resource Agent heartbeat
-- **Phase 3:** FastAPI + Streamlit UI (incl. a Resume Lab screen) + auth + Railway deploy
-- **Phase 4:** Progress Tracker intelligence + proactive orchestrator + targeted drilling
-
-## Notes
-- Model: `claude-sonnet-4-6` (configurable via `MODEL_NAME`).
-- Scores and sessions persist to PostgreSQL; resume outputs persist to `applications`.
+## Not in this version
+- Resume / ATS lab UI (the agent in `agents/resume_agent.py` still works from Python)
+- Multi-user accounts / cloud deployment
+- In-browser code editor for coding mocks (answers are typed or pasted as text)

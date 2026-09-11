@@ -1,0 +1,18 @@
+{# Shared form fields for a question. Expects `q` (dict-like) and `topics` (list) or none. #}
+<label>Prompt<textarea name="prompt" rows="3" required>{{ q.prompt }}</textarea></label>
+<label>What interviewers look for <span class="muted">(one per line)</span>
+  <textarea name="look_for" rows="3">{{ q.look_for | join('\n') }}</textarea></label>
+<label>Strong answer covers <span class="muted">(one per line — scoring checks each)</span>
+  <textarea name="covers" rows="6" required>{{ q.covers | join('\n') }}</textarea></label>
+<label>Follow-ups <span class="muted">(one per line)</span>
+  <textarea name="follow_ups" rows="3">{{ q.follow_ups | join('\n') }}</textarea></label>
+<label>Sample answer <span class="muted">(spoken prose, shown after the mock)</span>
+  <textarea name="sample_answer" rows="6">{{ q.sample_answer }}</textarea></label>
+<div class="actions">
+  {% if topics %}
+  <label>Topic<select name="topic">{% for t in topics %}<option value="{{ t }}" {{ 'selected' if t == q.topic else '' }}>{{ t | topic }}</option>{% endfor %}</select></label>
+  {% endif %}
+  <label>Difficulty<select name="difficulty">{% for d in DIFFICULTIES %}<option value="{{ d }}" {{ 'selected' if d == q.difficulty else '' }}>{{ d }}</option>{% endfor %}</select></label>
+  <label>Tags <span class="muted">(comma-separated)</span><input name="tags" value="{{ q.tags | join(', ') }}"></label>
+  <label>Companies<input name="companies" value="{{ q.companies | join(', ') }}" placeholder="optional"></label>
+</div>

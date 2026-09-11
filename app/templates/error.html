@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Interview Mentor{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>{{ message }}</p>
+{% if detail %}<pre class="detail">{{ detail }}</pre>{% endif %}
+<p><a class="btn" href="/">Back to dashboard</a></p>
+{% endblock %}

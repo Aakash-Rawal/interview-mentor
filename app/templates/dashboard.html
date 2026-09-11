@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>{{ DOMAINS[domain] }}</h1>
+  <div class="actions">
+    <a class="btn primary" href="/mock?domain={{ domain }}">{{ 'Resume mock' if active_mock else 'Start a mock' }}</a>
+    <a class="btn" href="/learn?domain={{ domain }}">Study with the tutor</a>
+  </div>
+</header>
+
+{% for p in config_problems %}<div class="banner warn">{{ p }} — fix it in <code>.env</code> and restart. See <a href="/settings">Settings</a>.</div>{% endfor %}
+
+{% if active_mock %}
+<div class="banner info">A {{ active_mock.topic | topic }} mock is in progress ({{ active_mock.transcript | length }} turns).
+  <a href="/mock/{{ active_mock.id }}">Continue →</a></div>
+{% endif %}
+
+<section class="cards">
+  <div class="card stat">
+    <div class="label">Interview</div>
+    {% if days_to_interview is none %}
+      <div class="big muted">not set</div><a href="/settings">set a date</a>
+    {% elif days_to_interview < 0 %}
+      <div class="big">{{ -days_to_interview }}d ago</div><div class="muted">{{ user.interview_date | dt }}</div>
+    {% else %}
+      <div class="big">{{ days_to_interview }} days</div><div class="muted">{{ user.interview_date | dt }}</div>
+    {% endif %}
+  </div>
+  <div class="card stat">
+    <div class="label">Scored mocks</div>
+    <div class="big">{{ counts.mocks.get('finished', 0) }}</div>
+    <div class="muted">{{ counts.conversations }} tutor sessions</div>
+  </div>
+  <div class="card stat">
+    <div class="label">Target role</div>
+    <div class="big small">{{ user.target_roles.get(domain) or '—' }}</div>
+    <div class="muted">{{ user.background.get('experience') or 'no profile yet' }}</div>
+  </div>
+</section>
+
+<section class="two-col">
+  <div class="card">
+    <h2>Topics</h2>
+    <table class="table">
+      <thead><tr><th>Topic</th><th>Mocks</th><th>Average</th><th>Last</th><th>Trend</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.topic | topic }}</td>
+          {% if r.stats %}
+            <td>{{ r.stats.count }}</td>
+            <td><span class="score s{{ (r.stats.avg) | round | int }}">{{ r.stats.avg }}</span></td>
+            <td>{{ r.stats.last }}</td>
+            <td>{% if r.trend is none %}<span class="muted">—</span>{% elif r.trend > 0 %}<span class="up">▲ {{ r.trend }}</span>{% elif r.trend < 0 %}<span class="down">▼ {{ -r.trend }}</span>{% else %}<span class="muted">flat</span>{% endif %}</td>
+          {% else %}
+            <td class="muted" colspan="4">not attempted yet</td>
+          {% endif %}
+          <td class="right"><a href="/learn?domain={{ domain }}&topic={{ r.topic }}">learn</a> · <a href="/mock?domain={{ domain }}&topic={{ r.topic }}">mock</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Weakest rubric dimensions</h2>
+    {% if weak %}
+      <ul class="plain">
+      {% for w in weak %}
+        <li><span class="score s{{ w.avg | round | int }}">{{ w.avg }}</span> {{ w.dimension | dim }} <span class="muted">· {{ w.topic | topic }}</span></li>
+      {% endfor %}
+      </ul>
+      <p class="muted">The tutor sees these and steers explanations toward them.</p>
+    {% else %}
+      <p class="muted">Finish a mock and your weak spots will show up here.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="two-col">
+  <div class="card">
+    <h2>Recent mocks</h2>
+    {% if recent %}
+      <ul class="plain">
+      {% for m in recent %}
+        <li><a href="/mock/{{ m.id }}"><span class="score s{{ (m.total or 0) | round | int }}">{{ m.total }}</span> {{ m.topic | topic }} · {{ m.difficulty }}</a>
+          <span class="muted">{{ m.finished_at | dt }}</span>
+          {% if m.score and m.score.top_fix %}<div class="muted small">Fix: {{ m.score.top_fix }}</div>{% endif %}</li>
+      {% endfor %}
+      </ul>
+    {% else %}<p class="muted">No scored mocks yet in this domain.</p>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Recent study sessions</h2>
+    {% if recent_chats %}
+      <ul class="plain">
+      {% for c in recent_chats %}
+        <li><a href="/learn/{{ c.id }}">{{ c.title }}</a> <span class="muted">· {{ c.topic | topic }} · {{ c.updated_at | dt }}</span></li>
+      {% endfor %}
+      </ul>
+    {% else %}<p class="muted">No tutor sessions yet.</p>{% endif %}
+  </div>
+</section>
+{% endblock %}

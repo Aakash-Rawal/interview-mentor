@@ -23,7 +23,6 @@ import json
 from db.connection import get_cursor
 from db.models import init_db
 from question_bank.extractor import ExtractedQuestion, deduplicate, extract_questions
-from question_bank.questions import QUESTIONS
 from question_bank.scraper import (
     RawPost,
     fetch_github,
@@ -38,16 +37,14 @@ from question_bank.scraper import (
 # ---------------------------------------------------------------------------
 
 def _load_existing_prompts() -> list[str]:
-    """Return all prompts currently in the bank (hardcoded + approved scraped)."""
-    prompts = [q["prompt"] for q in QUESTIONS]
+    """All prompts in the bank files plus pending candidates (for dedup)."""
+    from db import repo
     try:
-        with get_cursor() as cur:
-            cur.execute("SELECT prompt FROM scraped_questions WHERE approved = TRUE")
-            rows = cur.fetchall()
-            prompts.extend(r["prompt"] for r in rows)
+        return repo.existing_prompts()
     except Exception as exc:  # noqa: BLE001
-        print(f"[pipeline] Could not load existing DB prompts (continuing): {exc}")
-    return prompts
+        print(f"[pipeline] Could not load existing prompts (continuing): {exc}")
+        from question_bank import store
+        return [q["prompt"] for q in store.load_all()]
 
 
 def _load_existing_source_ids() -> set[str]:

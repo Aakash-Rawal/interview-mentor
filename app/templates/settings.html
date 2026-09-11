@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Settings · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head"><h1>Settings</h1></header>
+{% if saved %}<div class="banner ok">Saved.</div>{% endif %}
+
+<section class="two-col">
+  <form method="post" action="/api/settings" class="card stack">
+    <h2>Your profile</h2>
+    <p class="muted small">The tutor and interviewer read this on every turn.</p>
+    <label>Experience level
+      <input name="experience" value="{{ user.background.get('experience', '') }}" placeholder="e.g. 4 years backend, 1 year on-call">
+    </label>
+    <label>Preferred programming language
+      <input name="language" value="{{ user.background.get('language', '') }}" placeholder="python">
+    </label>
+    <label>Target role — Production Engineering
+      <input name="target_role_pe" value="{{ user.target_roles.get('pe', '') }}" placeholder="e.g. Meta Production Engineer E5">
+    </label>
+    <label>Target role — Network Engineering
+      <input name="target_role_ne" value="{{ user.target_roles.get('ne', '') }}" placeholder="e.g. Network Engineer L5">
+    </label>
+    <label>Interview date
+      <input type="date" name="interview_date" value="{{ user.interview_date.isoformat() if user.interview_date else '' }}">
+    </label>
+    <label>Notes for the tutor
+      <textarea name="notes" rows="3" placeholder="Anything the tutor should know: weak spots, what you want to focus on…">{{ user.background.get('notes', '') }}</textarea>
+    </label>
+    <label>Default domain
+      <select name="current_domain">
+        {% for k, v in DOMAINS.items() %}<option value="{{ k }}" {{ 'selected' if k == user.current_domain else '' }}>{{ v }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Model
+      <select name="model">
+        <option value="" {{ 'selected' if not user.model else '' }}>Default ({{ default_model }})</option>
+        {% for k, v in MODELS.items() %}<option value="{{ k }}" {{ 'selected' if k == user.model else '' }}>{{ v }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="btn primary" type="submit">Save</button>
+  </form>
+
+  <div class="card stack">
+    <h2>System</h2>
+    <p>API key: {% if key_set %}<strong>set</strong>{% else %}<strong class="down">not set</strong>{% endif %}
+      <span class="muted small">— edit <code>{{ env_path }}</code> and restart the app to change it.</span></p>
+    <p>Database: <code>{{ db_url }}</code></p>
+    {% if key_status %}
+      <div class="banner {{ 'ok' if key_status[0] else 'warn' }}">{{ key_status[1] }}</div>
+    {% endif %}
+    <a class="btn" href="/settings?check=1">Check API key &amp; model</a>
+    <h3>Running the app</h3>
+    <p class="muted small">Installed as a launchd agent it starts at login and stays at
+      <code>http://127.0.0.1:8765</code>. See <code>scripts/install_launch_agent.sh</code> and the README.</p>
+  </div>
+</section>
+{% endblock %}

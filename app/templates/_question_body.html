@@ -1,0 +1,6 @@
+{# Read-only rendering of a question's structured sections. Expects `q`. #}
+{% if q.look_for %}<div class="q-section"><strong>Interviewers look for</strong><ul>{% for i in q.look_for %}<li>{{ i }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="q-section"><strong>Strong answer covers</strong>
+  {% if q.covers %}<ol>{% for i in q.covers %}<li>{{ i }}</li>{% endfor %}</ol>{% else %}<p>{{ q.expected_answer_notes }}</p>{% endif %}</div>
+{% if q.follow_ups %}<div class="q-section"><strong>Follow-ups</strong><ul>{% for i in q.follow_ups %}<li>{{ i }}</li>{% endfor %}</ul></div>{% endif %}
+{% if q.sample_answer %}<details class="q-sample"><summary>Sample answer</summary><div class="md">{{ q.sample_answer }}</div></details>{% endif %}
