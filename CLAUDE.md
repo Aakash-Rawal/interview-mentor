@@ -21,6 +21,9 @@ launchctl kickstart -k "gui/$(id -u)/com.interviewmentor.server"   # restart the
 tail -f ~/Library/Logs/interview-mentor.log        # service log
 scripts/install_launch_agent.sh                    # (re)install the service; uninstall_launch_agent.sh removes it
 python -m question_bank.pipeline --sources hackernews github        # optional scraper -> review queue
+.venv/bin/python scripts/show_prompt.py plans                      # plan + focus area ids
+.venv/bin/python scripts/show_prompt.py tutor --conversation 42    # the prompt an agent would send
+IM_DEBUG_PROMPTS=1 scripts/serve.sh                                # log every prompt to prompts.log
 ```
 
 Tests need local Postgres (`DATABASE_URL` in `.env`); web tests skip if it is unreachable.
@@ -72,6 +75,14 @@ from the other domain are kept, with a focus area's real domain derived from its
 (`repo._focus_row`), so a PE plan can hold a routing focus area. The plan is a fixed checklist:
 nothing re-prioritises it as scores change. Growing the bank for a thin focus area is not wired
 in yet; use the Question bank page.
+
+**Seeing what an agent sent.** Two ways, and they answer different questions.
+`IM_DEBUG_PROMPTS=1` makes `agents/base.py::_request` append every system prompt and message
+list to `config.DEBUG_PROMPT_LOG` (`prompts.log`, gitignored) just before the call — one hook,
+so it covers tutor, interviewer, planner and generator, and it logs even when the call then
+fails. `scripts/show_prompt.py` instead *previews* a prompt with no API call, which works
+because prompt building is pure; it shares `planner.plan_messages()` with the real call so a
+preview cannot drift from what is sent. Restart the service after either (Python changed).
 
 **Skill files** (`skills/<domain>/*.md`) are prepended to tutor, interviewer, and generator
 prompts as ground truth and are editable in the app. `load_skill` is `lru_cache`d; the skill

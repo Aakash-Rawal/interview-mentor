@@ -39,6 +39,14 @@ MAX_TOKENS_BATCH = 48000     # question generation / enrichment (streamed)
 EFFORT_CHAT = "medium"       # conversational turns: latency matters
 EFFORT_SCORE = "high"        # rubric scoring: correctness matters
 
+# --- Prompt debugging ----------------------------------------------------
+# IM_DEBUG_PROMPTS=1 appends every system prompt and message list to the log below
+# just before each Claude call — the way to see what the agents actually sent.
+# Off unless set. The log contains whatever went into the prompt, including your
+# resume and any job description, so it is gitignored; delete it when you are done.
+DEBUG_PROMPTS = os.getenv("IM_DEBUG_PROMPTS", "").strip().lower() not in ("", "0", "false", "no")
+DEBUG_PROMPT_LOG = Path(os.getenv("IM_DEBUG_PROMPT_LOG") or BASE_DIR / "prompts.log")
+
 # --- Domains & topics ----------------------------------------------------
 DOMAINS = {
     "pe": "Production Engineering / SRE",

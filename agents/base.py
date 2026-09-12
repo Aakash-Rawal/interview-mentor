@@ -7,11 +7,15 @@ depth for latency per call site.
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime
 from functools import lru_cache
 
 import anthropic
 
 import config
+
+log = logging.getLogger("interview_mentor")
 
 
 class ClaudeError(RuntimeError):
@@ -37,7 +41,7 @@ def load_skill(topic: str) -> str:
 
 def _request(system: str, messages: list[dict], max_tokens: int, effort: str,
              model: str | None) -> dict:
-    return dict(
+    request = dict(
         model=model or config.DEFAULT_MODEL,
         max_tokens=max_tokens,
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -45,6 +49,27 @@ def _request(system: str, messages: list[dict], max_tokens: int, effort: str,
         thinking={"type": "adaptive"},
         output_config={"effort": effort},
     )
+    if config.DEBUG_PROMPTS:
+        _log_prompt(request)
+    return request
+
+
+def _log_prompt(request: dict) -> None:
+    """Append the exact prompt to config.DEBUG_PROMPT_LOG.
+
+    Every Claude call in the app builds its request here, so this one hook covers the
+    tutor, the interviewer, the planner and the generator. Logging never breaks a call.
+    """
+    try:
+        with open(config.DEBUG_PROMPT_LOG, "a", encoding="utf-8") as fh:
+            fh.write(f"\n{'=' * 78}\n{datetime.now():%Y-%m-%d %H:%M:%S} · "
+                     f"model={request['model']} · effort={request['output_config']['effort']} "
+                     f"· max_tokens={request['max_tokens']}\n{'=' * 78}\n")
+            fh.write("----- SYSTEM -----\n" + request["system"][0]["text"] + "\n")
+            for message in request["messages"]:
+                fh.write(f"----- {message['role'].upper()} -----\n{message['content']}\n")
+    except OSError as exc:
+        log.warning("could not write the prompt log: %s", exc)
 
 
 def _friendly(exc: Exception) -> ClaudeError:
