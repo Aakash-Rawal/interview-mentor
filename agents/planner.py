@@ -130,12 +130,18 @@ class Planner:
             raise ValueError("Add your resume in Settings before creating a plan.")
         raw = call_claude(
             self.system_prompt(domain, performance, bank),
-            [{"role": "user", "content":
-              f"=== RESUME ===\n{resume_text[:RESUME_CHARS]}\n\n"
-              f"=== JOB DESCRIPTION ===\n{jd_text[:JD_CHARS]}\n\n"
-              "Build the study plan now."}],
+            plan_messages(resume_text, jd_text),
             max_tokens=config.MAX_TOKENS_LONG, effort=config.EFFORT_SCORE, model=model)
         return normalise_plan(parse_json_object(raw), domain)
+
+
+def plan_messages(resume_text: str, jd_text: str) -> list[dict]:
+    """The user turn for a plan. Shared with scripts/show_prompt.py so a preview
+    cannot drift from what is actually sent."""
+    return [{"role": "user", "content":
+             f"=== RESUME ===\n{resume_text[:RESUME_CHARS]}\n\n"
+             f"=== JOB DESCRIPTION ===\n{jd_text[:JD_CHARS]}\n\n"
+             "Build the study plan now."}]
 
 
 def bank_text() -> str:

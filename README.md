@@ -56,6 +56,23 @@ To remove the background service: `scripts/uninstall_launch_agent.sh`.
 
 Switch between PE and NE with the toggle at the top of the sidebar.
 
+## When the output is not what you wanted
+The agents' prompts are built from the skill file for the topic, your profile, your mock
+record, and — inside a job plan — the focus area. To see exactly what went in:
+
+```bash
+IM_DEBUG_PROMPTS=1 scripts/serve.sh          # every prompt appended to prompts.log as it is sent
+.venv/bin/python scripts/show_prompt.py plans                   # plan and focus area ids
+.venv/bin/python scripts/show_prompt.py plan  --jd jd.txt       # what the planner would see
+.venv/bin/python scripts/show_prompt.py tutor --conversation 42 # what the tutor sees
+.venv/bin/python scripts/show_prompt.py mock  --mock 12         # what the interviewer sees
+```
+
+`show_prompt.py` calls no API and costs nothing, so it is the quick loop while editing a
+prompt or a skill file. `prompts.log` holds your resume and JD text — it is gitignored, but
+delete it when you are done. Restart the service after editing Python; skill files and
+question files reload on their own.
+
 ## Layout
 ```
 app/                FastAPI app: routes/pages.py (HTML), routes/api.py (streaming + actions),

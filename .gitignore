@@ -9,6 +9,7 @@ venv/
 *.egg-info/
 
 # Data / artifacts
+prompts.log
 chroma_data/
 uploads/
 *.docx

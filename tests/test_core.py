@@ -92,6 +92,34 @@ def test_conduct_prompt_hint_rule_and_notes():
     assert "Hints are OFF" in Interviewer().conduct_prompt(ctx, mock)
 
 
+def test_debug_prompt_log_is_off_by_default_and_captures_every_call(tmp_path, monkeypatch):
+    """IM_DEBUG_PROMPTS: one hook in _request covers every agent's calls."""
+    import config
+    from agents import base
+
+    log = tmp_path / "prompts.log"
+    monkeypatch.setattr(config, "DEBUG_PROMPT_LOG", log)
+
+    monkeypatch.setattr(config, "DEBUG_PROMPTS", False)
+    base._request("sys prompt", [{"role": "user", "content": "hi"}], 100, "medium", None)
+    assert not log.exists()
+
+    monkeypatch.setattr(config, "DEBUG_PROMPTS", True)
+    request = base._request("SYSTEM TEXT", [{"role": "user", "content": "USER TEXT"}],
+                            100, "high", "claude-opus-5")
+    assert request["system"][0]["text"] == "SYSTEM TEXT"      # logging does not alter the call
+    written = log.read_text()
+    assert "SYSTEM TEXT" in written and "USER TEXT" in written
+    assert "model=claude-opus-5" in written and "effort=high" in written
+
+    base._request("SECOND CALL", [], 100, "medium", None)
+    assert "SYSTEM TEXT" in log.read_text() and "SECOND CALL" in log.read_text()  # appends
+
+    # An unwritable log warns, it never breaks the Claude call.
+    monkeypatch.setattr(config, "DEBUG_PROMPT_LOG", tmp_path / "no" / "such" / "dir" / "p.log")
+    assert base._request("still works", [], 100, "medium", None)["max_tokens"] == 100
+
+
 def test_parse_json_object_tolerates_prose():
     assert parse_json_object('Sure:\n{"total": 7.5, "dimensions": {}}\nDone.')["total"] == 7.5
     assert "error" in parse_json_object("no json here")
