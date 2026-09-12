@@ -21,14 +21,8 @@ def client():
     from app.main import app
     with TestClient(app) as c:
         yield c
-    from db.connection import get_cursor
-    with get_cursor(commit=True) as cur:
-        for table in ("conversation_messages", ):
-            cur.execute(f"DELETE FROM {table} WHERE conversation_id IN "
-                        f"(SELECT id FROM conversations WHERE user_id = %s)", (config.USER_ID,))
-        for table in ("conversations", "mocks", "applications"):
-            cur.execute(f"DELETE FROM {table} WHERE user_id = %s", (config.USER_ID,))
-        cur.execute("DELETE FROM users WHERE id = %s", (config.USER_ID,))
+    from tests.conftest import purge_user
+    purge_user(config.USER_ID)
 
 
 def test_pages_render(client):

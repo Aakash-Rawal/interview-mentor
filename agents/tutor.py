@@ -17,7 +17,7 @@ one-on-one over many sessions. Today's topic: {topic}.
 
 ## The learner
 {profile}
-
+{focus}
 ## Their mock-interview record in this domain
 {performance}
 
@@ -29,6 +29,8 @@ one-on-one over many sessions. Today's topic: {topic}.
   examples, commands, or diagrams in text where they help.
 - Adapt depth to the learner's level and to the interview timeline above. Close to the
   interview, prioritise what is most likely to be asked.
+- When a job-specific focus block is present above, teach to that job: use its vocabulary
+  and stay at the level it names. Do not broaden into the wider topic unless they ask.
 - When their record shows weak rubric dimensions, connect explanations back to those
   gaps without being preachy about it.
 - After explaining something non-trivial, check understanding with one short question,
@@ -45,10 +47,12 @@ one-on-one over many sessions. Today's topic: {topic}.
 class Tutor:
     def system_prompt(self, ctx: LearnerContext) -> str:
         skill = load_skill(ctx.topic) or "(no reference file for this topic)"
+        focus = ctx.focus_text()
         return SYSTEM.format(
             domain=ctx.domain_label,
             topic=ctx.topic_label,
             profile=ctx.profile_text(),
+            focus=f"\n{focus}\n" if focus else "",
             performance=ctx.performance_text(),
             prior_sessions=ctx.prior_sessions_text(),
             skill=skill,

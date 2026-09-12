@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}{{ target.company or 'Plan' }} · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ target.role or 'Role not set' }}</h1>
+    <div class="muted">{{ target.company or 'Unnamed company' }}
+      {% if target.seniority %} · {{ target.seniority }}{% endif %}
+      · {{ DOMAINS[target.domain] }}</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/plans">All plans</a>
+    <form method="post" action="/api/plans/{{ target.id }}/status">
+      <input type="hidden" name="status" value="{{ 'active' if target.status == 'archived' else 'archived' }}">
+      <button class="btn small" type="submit">{{ 'Reactivate' if target.status == 'archived' else 'Archive' }}</button>
+    </form>
+  </div>
+</header>
+
+{% if target.status == 'archived' %}<div class="banner info">This plan is archived.</div>{% endif %}
+
+<section class="cards">
+  <div class="card stat">
+    <div class="label">Interview</div>
+    {% if days_to_interview is none %}
+      <div class="big muted">not set</div>
+    {% elif days_to_interview < 0 %}
+      <div class="big">{{ -days_to_interview }}d ago</div><div class="muted">{{ target.interview_date | dt }}</div>
+    {% else %}
+      <div class="big">{{ days_to_interview }} days</div><div class="muted">{{ target.interview_date | dt }}</div>
+    {% endif %}
+  </div>
+  <div class="card stat">
+    <div class="label">Focus areas ready</div>
+    <div class="big">{{ areas | selectattr('status', 'equalto', 'ready') | list | length }} / {{ areas | length }}</div>
+    <div class="muted">you mark these yourself</div>
+  </div>
+  <div class="card stat">
+    <div class="label">Mocks on this plan</div>
+    <div class="big">{{ areas | sum(attribute='mock_count') }}</div>
+    <div class="muted">scored against these focus areas</div>
+  </div>
+</section>
+
+{% if target.summary %}
+<div class="card">
+  <h2>What this loop will test</h2>
+  <p>{{ target.summary }}</p>
+</div>
+{% endif %}
+
+<h2>Focus areas</h2>
+<p class="muted small">Ordered by what the job leans on most and your resume shows least. The topic
+  in brackets is only where the practice material comes from — the focus area itself is the subject.</p>
+
+{% for a in areas %}
+<div class="card" id="f{{ a.id }}">
+  <div class="page-head" style="margin-bottom:6px">
+    <div>
+      <strong>{{ a.priority }}. {{ a.title }}</strong>
+      <span class="pill {{ 'medium' if a.level == 'tool' else 'easy' }}">{{ 'tool' if a.level == 'tool' else 'concept' }}</span>
+      {% set n = bank.get(a.domain, {}).get(a.topic, 0) %}
+      <div class="muted small">practice topic: {{ a.topic | topic }}{% if a.domain != target.domain %}
+          <span class="pill">{{ DOMAINS[a.domain] }}</span>{% endif %} ·
+        {{ n }} question{{ '' if n == 1 else 's' }} in the bank
+        {% if a.mock_count %} · {{ a.mock_count }} mock{{ '' if a.mock_count == 1 else 's' }}
+          {% if a.avg_total is not none %}avg <span class="score s{{ a.avg_total | round | int }}">{{ a.avg_total }}</span>{% endif %}
+        {% endif %}
+        {% if a.chat_count %} · {{ a.chat_count }} tutor session{{ '' if a.chat_count == 1 else 's' }}{% endif %}
+      </div>
+    </div>
+    <form method="post" action="/api/focus/{{ a.id }}/status" class="actions">
+      <select name="status" onchange="this.form.submit()">
+        {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if s == a.status else '' }}>{{ s }}</option>{% endfor %}
+      </select>
+      <noscript><button class="btn small" type="submit">Set</button></noscript>
+    </form>
+  </div>
+
+  {% if a.why_jd %}<div class="q-section"><strong class="muted small">THE JOB ASKS FOR</strong><div>{{ a.why_jd }}</div></div>{% endif %}
+  {% if a.gap %}<div class="q-section"><strong class="muted small">WHERE YOU STAND</strong><div>{{ a.gap }}</div></div>{% endif %}
+  {% if a.keywords %}
+    <div class="q-section">{% for k in a.keywords %}<span class="pill">{{ k }}</span>{% endfor %}</div>
+  {% endif %}
+
+  <div class="actions">
+    <form method="post" action="/api/focus/{{ a.id }}/learn">
+      <button class="btn primary" type="submit">Study this with the tutor</button>
+    </form>
+    <form method="post" action="/api/focus/{{ a.id }}/mock" class="actions">
+      <select name="difficulty">
+        <option value="any">any difficulty</option>
+        {% for d in DIFFICULTIES %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+      </select>
+      <label class="muted small"><input type="checkbox" name="hints" value="1"> hints</label>
+      <button class="btn" type="submit" {{ 'disabled' if not n else '' }}>Practice a mock</button>
+    </form>
+  </div>
+  {% if not n %}
+    <p class="muted small">No questions for this topic yet — grow the bank from
+      <a href="/questions?domain={{ a.domain }}&topic={{ a.topic }}">Question bank</a>.</p>
+  {% endif %}
+</div>
+{% endfor %}
+
+<section class="two-col">
+  <div class="card">
+    <h2>Already covered — skip these</h2>
+    {% if target.strengths %}
+      <ul class="plain">{% for s in target.strengths %}<li>{{ s }}</li>{% endfor %}</ul>
+    {% else %}<p class="muted">Nothing in your resume matched this job strongly enough to skip.</p>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Not covered by any topic</h2>
+    {% if target.unmapped %}
+      <ul class="plain">{% for u in target.unmapped %}<li>{{ u }}</li>{% endfor %}</ul>
+      <p class="muted small">These are on you — the app has no practice material for them.</p>
+    {% else %}<p class="muted">Everything the job asks for maps to a topic.</p>{% endif %}
+  </div>
+</section>
+
+<details class="card">
+  <summary class="muted">The job description used for this plan</summary>
+  <div class="detail" style="margin-top:10px">{{ target.jd_text }}</div>
+  <form method="post" action="/api/plans/{{ target.id }}/delete" style="margin-top:10px"
+        onsubmit="return confirm('Delete this plan and its focus areas? Your chats and mocks are kept.')">
+    <button class="btn small" type="submit">Delete this plan</button>
+  </form>
+</details>
+{% endblock %}

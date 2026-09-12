@@ -10,6 +10,8 @@ Tables
   mocks                  mock interviews: question, transcript, score — resumable
   resumes / applications resume lab (kept from the earlier build)
   scraped_questions      review queue: generated/scraped candidates until promoted to a file
+  job_targets            one row per job being chased: resume + JD + the planner's analysis
+  focus_areas            what to study for a job target; conversations/mocks point back at it
 
 Earlier builds also created sessions / messages / scores; those are no longer
 written or read and can be dropped by hand if present.
@@ -121,6 +123,48 @@ SCHEMA = [
     "ALTER TABLE scraped_questions ADD COLUMN IF NOT EXISTS sample_answer TEXT",
     "ALTER TABLE scraped_questions ADD COLUMN IF NOT EXISTS companies JSONB NOT NULL DEFAULT '[]'",
     "ALTER TABLE scraped_questions ADD COLUMN IF NOT EXISTS promoted_id TEXT",
+    """
+    CREATE TABLE IF NOT EXISTS job_targets (
+        id             SERIAL PRIMARY KEY,
+        user_id        TEXT NOT NULL REFERENCES users(id),
+        company        TEXT NOT NULL DEFAULT '',
+        role           TEXT NOT NULL DEFAULT '',
+        domain         TEXT NOT NULL DEFAULT 'pe',
+        seniority      TEXT NOT NULL DEFAULT '',
+        jd_text        TEXT NOT NULL,
+        resume_id      INTEGER REFERENCES resumes(id) ON DELETE SET NULL,
+        interview_date DATE,
+        status         TEXT NOT NULL DEFAULT 'active',   -- active | archived
+        summary        TEXT NOT NULL DEFAULT '',
+        strengths      JSONB NOT NULL DEFAULT '[]',
+        unmapped       JSONB NOT NULL DEFAULT '[]',
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS job_targets_user_idx "
+    "ON job_targets (user_id, status, updated_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS focus_areas (
+        id         SERIAL PRIMARY KEY,
+        target_id  INTEGER NOT NULL REFERENCES job_targets(id) ON DELETE CASCADE,
+        title      TEXT NOT NULL,
+        topic      TEXT NOT NULL,
+        level      TEXT NOT NULL DEFAULT 'concept',  -- tool | concept
+        priority   INTEGER NOT NULL DEFAULT 5,
+        why_jd     TEXT NOT NULL DEFAULT '',
+        gap        TEXT NOT NULL DEFAULT '',
+        keywords   JSONB NOT NULL DEFAULT '[]',
+        status     TEXT NOT NULL DEFAULT 'todo',     -- todo | studying | ready
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS focus_areas_target_idx ON focus_areas (target_id, priority)",
+    # Study done against a plan is tagged, so plan progress is a query, not bookkeeping.
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS focus_id INTEGER "
+    "REFERENCES focus_areas(id) ON DELETE SET NULL",
+    "ALTER TABLE mocks ADD COLUMN IF NOT EXISTS focus_id INTEGER "
+    "REFERENCES focus_areas(id) ON DELETE SET NULL",
 ]
 
 

@@ -7,14 +7,17 @@ a final line starting with the ERROR_MARKER so the client can show it.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote
 
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 import config
 from agents.base import ClaudeError, load_skill
 from agents.interviewer import Interviewer
+from agents.planner import Planner, bank_text, performance_text
 from agents.tutor import Tutor
 from context.learner import build_context
 from db import repo
@@ -22,9 +25,16 @@ from db import repo
 router = APIRouter()
 USER = config.USER_ID
 ERROR_MARKER = "\n\x1e ERROR: "   # record separator — never appears in normal prose
+RESUME_SUFFIXES = (".pdf", ".docx", ".txt")
 
 tutor = Tutor()
 interviewer = Interviewer()
+planner = Planner()
+
+
+def _back(path: str, **params) -> RedirectResponse:
+    query = "&".join(f"{k}={quote(str(v))}" for k, v in params.items() if v)
+    return RedirectResponse(f"{path}?{query}" if query else path, status_code=303)
 
 
 def _stream(gen: Iterator[str], on_complete) -> StreamingResponse:
@@ -43,6 +53,135 @@ def _stream(gen: Iterator[str], on_complete) -> StreamingResponse:
         on_complete("".join(chunks))
     return StreamingResponse(body(), media_type="text/plain; charset=utf-8",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ----------------------------------------------------------------- resumes
+@router.post("/resumes")
+async def upload_resume(file: UploadFile | None = File(None), text: str = Form("")):
+    """Store the base resume, from a .pdf/.docx/.txt upload or pasted text."""
+    from agents.resume_agent import parse_resume_file   # lazy: pulls in pdfminer/docx
+    content = text.strip()
+    file_name = None
+    if file is not None and file.filename:
+        file_name = Path(file.filename).name          # never trust the client's path
+        if Path(file_name).suffix.lower() not in RESUME_SUFFIXES:
+            return _back("/settings", resume_error="Use a .pdf, .docx or .txt file.")
+        dest = config.UPLOADS_DIR / file_name
+        dest.write_bytes(await file.read())
+        try:
+            content = parse_resume_file(str(dest)).strip()
+        except Exception as exc:  # noqa: BLE001 — pdfminer/docx raise all sorts
+            return _back("/settings", resume_error=f"Could not read that file: {exc}")
+    if len(content) < 80:
+        return _back("/settings", resume_error="That resume looks empty — paste the text or "
+                                               "upload a file with selectable text.")
+    repo.save_resume(USER, content, file_name=file_name, is_base=True)
+    return _back("/settings", saved="1")
+
+
+# ------------------------------------------------------------------- plans
+@router.post("/plans")
+def create_plan(jd_text: str = Form(...), company: str = Form(""), role: str = Form(""),
+                domain: str = Form("auto"), interview_date: str = Form("")):
+    """Analyse the pasted JD against the stored resume and persist the plan.
+
+    Blocking: one high-effort Claude call, same pattern as question generation.
+    """
+    resume = repo.get_base_resume(USER)
+    if not resume:
+        return _back("/plans/new", error="Add your resume in Settings first.")
+    when = None
+    if interview_date.strip():
+        try:
+            when = date.fromisoformat(interview_date.strip())
+        except ValueError:
+            return _back("/plans/new", error="Interview date must be YYYY-MM-DD.")
+    user = repo.get_user(USER)
+    try:
+        plan = planner.build_plan(
+            resume["content_text"], jd_text,
+            domain=domain if domain in config.DOMAINS else None,
+            performance=performance_text(USER), bank=bank_text(), model=user.get("model"))
+    except ValueError as exc:
+        return _back("/plans/new", error=str(exc))
+    except ClaudeError as exc:
+        return _back("/plans/new", error=str(exc))
+    if plan.get("error"):
+        return _back("/plans/new", error="Claude's plan could not be parsed. Try again.")
+    if not plan["focus_areas"]:
+        return _back("/plans/new", error="No focus areas came back — the job description may be "
+                                         "too vague, or it may not be a PE/SRE or network role.")
+    target_id = repo.create_target(
+        USER, jd_text=jd_text.strip(), company=company.strip() or plan["company"],
+        role=role.strip() or plan["role"], domain=plan["domain"], seniority=plan["seniority"],
+        resume_id=resume["id"], interview_date=when, summary=plan["summary"],
+        strengths=plan["strengths"], unmapped=plan["unmapped"])
+    repo.add_focus_areas(target_id, plan["focus_areas"])
+    repo.update_user(USER, current_domain=plan["domain"])
+    return RedirectResponse(f"/plans/{target_id}", status_code=303)
+
+
+@router.post("/plans/{target_id}/status")
+def set_plan_status(target_id: int, status: str = Form(...)):
+    if status not in ("active", "archived"):
+        raise HTTPException(400, "unknown status")
+    repo.set_target_status(target_id, USER, status)
+    return RedirectResponse("/plans" if status == "archived" else f"/plans/{target_id}",
+                            status_code=303)
+
+
+@router.post("/plans/{target_id}/delete")
+def delete_plan(target_id: int):
+    """Drops the plan and its focus areas. Chats and mocks stay, unlinked."""
+    repo.delete_target(target_id, USER)
+    return RedirectResponse("/plans", status_code=303)
+
+
+# ------------------------------------------------------------- focus areas
+@router.post("/focus/{focus_id}/status")
+def set_focus_status(focus_id: int, status: str = Form(...)):
+    focus = repo.get_focus(focus_id, USER)
+    if not focus:
+        raise HTTPException(404)
+    if status not in config.FOCUS_STATUSES:
+        raise HTTPException(400, "unknown status")
+    repo.set_focus_status(focus_id, USER, status)
+    return RedirectResponse(f"/plans/{focus['target_id']}#f{focus_id}", status_code=303)
+
+
+@router.post("/focus/{focus_id}/learn")
+def learn_focus(focus_id: int):
+    """Start a tutor session on a focus area. The chat carries the job context."""
+    focus = repo.get_focus(focus_id, USER)
+    if not focus:
+        raise HTTPException(404)
+    conv_id = repo.create_conversation(USER, focus["domain"], focus["topic"],
+                                       focus["title"][:120], focus_id=focus_id)
+    if focus["status"] == "todo":
+        repo.set_focus_status(focus_id, USER, "studying")
+    repo.update_user(USER, current_domain=focus["domain"])
+    return RedirectResponse(f"/learn/{conv_id}", status_code=303)
+
+
+@router.post("/focus/{focus_id}/mock")
+def mock_focus(focus_id: int, difficulty: str = Form("any"), hints: str | None = Form(None)):
+    """Start a mock on a focus area, preferring questions that match its JD vocabulary."""
+    focus = repo.get_focus(focus_id, USER)
+    if not focus:
+        raise HTTPException(404)
+    if repo.get_active_mock(USER):
+        raise HTTPException(409, "a mock is already in progress — finish or abandon it first")
+    question = interviewer.pick_question(
+        focus["domain"], focus["topic"], difficulty, repo.covered_question_ids(USER),
+        prefer_tags=focus.get("keywords") or [])
+    if not question:
+        raise HTTPException(404, "no questions in the bank for this focus area's topic yet")
+    mock_id = repo.create_mock(USER, focus["domain"], focus["topic"], question,
+                               question["difficulty"], bool(hints), focus_id=focus_id)
+    if focus["status"] == "todo":
+        repo.set_focus_status(focus_id, USER, "studying")
+    repo.update_user(USER, current_domain=focus["domain"])
+    return RedirectResponse(f"/mock/{mock_id}", status_code=303)
 
 
 # ------------------------------------------------------------------ learn
@@ -67,7 +206,9 @@ def send_message(conv_id: int, text: str = Form(...)):
     if not history:
         repo.rename_conversation(conv_id, Tutor.title_from(text))
     repo.add_message(conv_id, "user", text)
-    ctx = build_context(USER, conv["domain"], conv["topic"], exclude_conversation=conv_id)
+    focus = repo.get_focus(conv["focus_id"], USER) if conv.get("focus_id") else None
+    ctx = build_context(USER, conv["domain"], conv["topic"], exclude_conversation=conv_id,
+                        focus=focus)
 
     def done(reply: str):
         if reply.strip():
@@ -106,7 +247,7 @@ def mock_turn(mock_id: int, text: str = Form(...)):
     text = text.strip()
     if not text:
         raise HTTPException(400, "empty message")
-    ctx = build_context(USER, mock["domain"], mock["topic"])
+    ctx = build_context(USER, mock["domain"], mock["topic"], focus=_mock_focus(mock))
 
     def done(reply: str):
         turns = [{"role": "user", "content": text}]
@@ -124,7 +265,7 @@ def finish_mock(mock_id: int):
         raise HTTPException(404, "no active mock")
     if len(mock["transcript"]) < 2:
         return JSONResponse({"error": "Answer at least once before scoring."}, status_code=400)
-    ctx = build_context(USER, mock["domain"], mock["topic"])
+    ctx = build_context(USER, mock["domain"], mock["topic"], focus=_mock_focus(mock))
     try:
         score = interviewer.score(ctx, mock)
     except ClaudeError as exc:
@@ -133,6 +274,10 @@ def finish_mock(mock_id: int):
         return JSONResponse({"error": score["error"]}, status_code=502)
     repo.finish_mock(mock_id, score)
     return JSONResponse({"ok": True, "total": score["total"]})
+
+
+def _mock_focus(mock: dict) -> dict | None:
+    return repo.get_focus(mock["focus_id"], USER) if mock.get("focus_id") else None
 
 
 @router.post("/mocks/{mock_id}/abandon")

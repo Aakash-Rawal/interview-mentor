@@ -51,9 +51,10 @@ def client():
     with TestClient(app) as c:
         yield c
     from db.connection import get_cursor
+    from tests.conftest import purge_user
     with get_cursor(commit=True) as cur:
         cur.execute("DELETE FROM scraped_questions WHERE source = 'pytest'")
-        cur.execute("DELETE FROM users WHERE id = %s", (config.USER_ID,))
+    purge_user(config.USER_ID)
 
 
 def test_review_queue_flow(client, tmp_path, monkeypatch):

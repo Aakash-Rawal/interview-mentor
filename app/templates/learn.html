@@ -31,6 +31,10 @@
         <div>
           <strong>{{ conversation.title }}</strong>
           <div class="muted small">{{ DOMAINS[conversation.domain] }} · {{ conversation.topic | topic }}</div>
+          {% if focus %}
+            <div class="muted small">Plan: <a href="/plans/{{ focus.target_id }}">{{ focus.role or 'role' }}{% if focus.company %} at {{ focus.company }}{% endif %}</a>
+              · {{ 'tool-level' if focus.level == 'tool' else 'concept-level' }} focus</div>
+          {% endif %}
         </div>
         <form method="post" action="/api/conversations/{{ conversation.id }}/archive" onsubmit="return confirm('Archive this session?')">
           <button class="btn small" type="submit">Archive</button>
@@ -41,7 +45,13 @@
           <div class="msg {{ m.role }}"><div class="bubble md">{{ m.content }}</div></div>
         {% endfor %}
         {% if not messages %}
-          <div class="empty">Ask anything about <strong>{{ conversation.topic | topic }}</strong>. The tutor knows your profile, your mock scores, and your earlier sessions on this topic.</div>
+          {% if focus %}
+            <div class="empty">This session is for <strong>{{ focus.title }}</strong>. The tutor has the
+              job description's requirement, the gap against your resume, and its vocabulary — ask it
+              to start wherever you want, or just say "where should I start?".</div>
+          {% else %}
+            <div class="empty">Ask anything about <strong>{{ conversation.topic | topic }}</strong>. The tutor knows your profile, your mock scores, and your earlier sessions on this topic.</div>
+          {% endif %}
         {% endif %}
       </div>
       <form id="chat-form" class="composer" data-endpoint="/api/conversations/{{ conversation.id }}/messages">

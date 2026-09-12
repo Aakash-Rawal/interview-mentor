@@ -29,4 +29,5 @@ templates.env.globals.update(
     TOPICS=config.TOPICS,
     DIFFICULTIES=config.DIFFICULTIES,
     MODELS=config.MODELS,
+    MAX_FOCUS_AREAS=config.MAX_FOCUS_AREAS,
 )

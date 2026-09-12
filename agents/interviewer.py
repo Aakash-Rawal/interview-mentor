@@ -64,7 +64,7 @@ CONDUCT_SYSTEM = """You are a rigorous but fair {domain} interviewer at a top te
 running a {difficulty} mock on the topic "{topic}".
 
 Candidate profile: {profile}
-
+{focus}
 The question you asked:
 ---
 {question}
@@ -82,6 +82,8 @@ Rules:
 - Never give away the answer. {hint_rule}
 - One step at a time: ask one thing, then stop and wait. Keep your turns short (2-6 lines).
 - If the candidate is vague, ask for specifics: exact commands, numbers, concrete designs.
+- If a job-specific focus block is present, prefer follow-ups that land on its vocabulary and
+  stay at the level it names — but never abandon the question you asked to get there.
 - If they say they are done or ask to be scored, tell them to click "Finish & score".
 - Plain text or light Markdown. No score, no verdict, no summary during the mock.
 
@@ -115,7 +117,10 @@ class Interviewer:
     # ---- question selection ---------------------------------------------
     @staticmethod
     def pick_question(domain: str, topic: str, difficulty: str | None,
-                      exclude_ids: set[str], rng: random.Random | None = None) -> dict | None:
+                      exclude_ids: set[str], rng: random.Random | None = None,
+                      prefer_tags: list[str] | set[str] | None = None) -> dict | None:
+        """Pick a question for a topic. `prefer_tags` (a focus area's JD vocabulary)
+        narrows the pool to the closest-matching questions before choosing at random."""
         rng = rng or random.Random()
         pool = get_questions(domain=domain, topic=topic, exclude_ids=exclude_ids)
         if difficulty and difficulty != "any":
@@ -125,6 +130,8 @@ class Interviewer:
             pool = get_questions(domain=domain, topic=topic)
             if difficulty and difficulty != "any":
                 pool = [q for q in pool if q["difficulty"] == difficulty] or pool
+        if prefer_tags:
+            pool = rank_by_tags(pool, prefer_tags) or pool
         return rng.choice(pool) if pool else None
 
     # ---- prompts --------------------------------------------------------
@@ -133,9 +140,11 @@ class Interviewer:
         hint_rule = ("Hints are ON: if they are stuck, give one gentle directional hint."
                      if mock.get("hints") else
                      "Hints are OFF: do not hint unless they explicitly ask for one.")
+        focus = ctx.focus_text()
         return CONDUCT_SYSTEM.format(
             domain=ctx.domain_label, topic=ctx.topic_label, difficulty=mock["difficulty"],
-            profile=ctx.profile_text(), question=q["prompt"],
+            profile=ctx.profile_text(), focus=f"\n{focus}\n" if focus else "",
+            question=q["prompt"],
             look_for=_join(q.get("look_for")) or "(not specified)",
             covers=_numbered(q.get("covers")) or q.get("expected_answer_notes", ""),
             follow_ups=_bulleted(q.get("follow_ups")) or "(improvise)",
@@ -187,6 +196,28 @@ class Interviewer:
             score["coverage_hit"] = sum(1 for c in cov if c.get("covered"))
             score["coverage_total"] = len(cov)
         return score
+
+
+def rank_by_tags(pool: list[dict], prefer_tags) -> list[dict]:
+    """Questions matching the most of `prefer_tags`, or [] when none match at all.
+
+    A focus area's keywords are the JD's words ("kubernetes", "bgp", "oomkill"), which may
+    appear in a question's tags or anywhere in its text, so both are searched.
+    """
+    terms = {str(t).strip().lower() for t in prefer_tags if str(t).strip()}
+    if not terms:
+        return []
+    scored = []
+    for q in pool:
+        haystack = " ".join([q.get("prompt", ""), " ".join(q.get("tags") or []),
+                             " ".join(q.get("covers") or [])]).lower()
+        hits = sum(1 for t in terms if t in haystack)
+        if hits:
+            scored.append((hits, q))
+    if not scored:
+        return []
+    best = max(h for h, _ in scored)
+    return [q for h, q in scored if h == best]
 
 
 def parse_json_object(raw: str) -> dict:

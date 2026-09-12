@@ -8,6 +8,9 @@ routing, troubleshooting, design, security). Two agents share one picture of you
   earlier sessions on the same topic.
 - **Interviewer** — one question at a time from a curated bank, probing follow-ups, then a
   rubric score per dimension with a top fix and a model answer. Mocks are resumable.
+- **Planner** — paste a job description and it is matched against your resume, giving a short
+  study checklist for that specific job. One plan per job you are chasing; every item on it
+  links straight into a tutor session or a scored mock.
 
 Everything persists to PostgreSQL. The app runs as a macOS launchd agent, so it is always at
 **http://127.0.0.1:8765** — no terminal, no scripts, just open the URL (or the Dock launcher).
@@ -33,15 +36,23 @@ To remove the background service: `scripts/uninstall_launch_agent.sh`.
 
 ## Using it
 1. **Settings** — fill in your experience, target roles, interview date, and pick a model.
-   The agents read this on every turn.
-2. **Learn** — pick a topic, start a session, ask anything. Sessions are saved and listed;
+   The agents read this on every turn. Upload your resume here too (`.pdf`, `.docx`, `.txt`,
+   or paste the text); job plans need it.
+2. **Job plans** — paste a job description and Claude compares it against your resume, then
+   gives you at most eight focus areas ordered by what the job leans on most and your resume
+   shows least. Things you already cover are listed as strengths so you can skip them. Each
+   focus area has a *Study this with the tutor* and a *Practice a mock* button, and the
+   session it starts carries the job's context. Mark items ready as you go; the plan is a
+   fixed checklist and does not reshuffle itself. Keep one plan per job and archive it when
+   the loop is over.
+3. **Learn** — pick a topic, start a session, ask anything. Sessions are saved and listed;
    reopen one to continue.
-3. **Mock interview** — pick topic and difficulty, answer as you would out loud, then
+4. **Mock interview** — pick topic and difficulty, answer as you would out loud, then
    *Finish & score*. You get per-dimension scores, a top fix, and what a strong answer covers.
    Refreshing or closing the tab does not lose a mock.
-4. **Dashboard** — per-topic averages and trend, your weakest rubric dimensions, recent
-   mocks and sessions, days to interview.
-5. **Question bank** — browse every question, see which you have been scored on.
+5. **Dashboard** — per-topic averages and trend, your weakest rubric dimensions, recent
+   mocks and sessions, days to interview, active job plans.
+6. **Question bank** — browse every question, see which you have been scored on.
 
 Switch between PE and NE with the toggle at the top of the sidebar.
 
@@ -50,6 +61,7 @@ Switch between PE and NE with the toggle at the top of the sidebar.
 app/                FastAPI app: routes/pages.py (HTML), routes/api.py (streaming + actions),
                     templates/, static/ (plain CSS + one JS file, no build step)
 agents/             base.py (Claude client, caching, streaming), tutor.py, interviewer.py,
+                    planner.py (resume + JD -> study plan),
                     resume_agent.py (importable; no UI page yet)
 context/learner.py  LearnerContext — the per-request snapshot every agent reads
 db/                 connection pool, schema (idempotent), repo.py (all queries)
@@ -101,6 +113,8 @@ and the sample answer is what you see after a mock.
    pulls public-source candidates into the same review queue.
 
 ## Not in this version
-- Resume / ATS lab UI (the agent in `agents/resume_agent.py` still works from Python)
+- Resume / ATS lab UI — tailoring, cover letters and the ATS match score (the agent in
+  `agents/resume_agent.py` still works from Python). Plans use the resume, but do not score it.
+- Generating or scraping questions for a focus area whose topic is thin in the bank
 - Multi-user accounts / cloud deployment
 - In-browser code editor for coding mocks (answers are typed or pasted as text)
