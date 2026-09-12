@@ -43,6 +43,9 @@
     <div>
       <strong>Mock in progress</strong> — {{ mock.topic | topic }} · {{ mock.difficulty }}{% if mock.hints %} · hints on{% endif %}
       <div class="muted small">Started {{ mock.created_at | dt }}. Say "done" any time, then finish to be scored.</div>
+      {% if focus %}
+        <div class="muted small">Plan: <a href="/plans/{{ focus.target_id }}">{{ focus.role or 'role' }}{% if focus.company %} at {{ focus.company }}{% endif %}</a> — focus area "{{ focus.title }}"</div>
+      {% endif %}
     </div>
     <div class="actions">
       <button class="btn primary" id="finish-btn" data-endpoint="/api/mocks/{{ mock.id }}/finish">Finish &amp; score</button>
@@ -64,8 +67,16 @@
 
 {% else %}
   <header class="page-head">
-    <h1>{{ mock.topic | topic }} mock · {{ mock.status }}</h1>
-    <div class="actions"><a class="btn primary" href="/mock?domain={{ mock.domain }}">Another mock</a></div>
+    <div>
+      <h1>{{ mock.topic | topic }} mock · {{ mock.status }}</h1>
+      {% if focus %}
+        <div class="muted small">Plan: <a href="/plans/{{ focus.target_id }}">{{ focus.role or 'role' }}{% if focus.company %} at {{ focus.company }}{% endif %}</a> — focus area "{{ focus.title }}"</div>
+      {% endif %}
+    </div>
+    <div class="actions">
+      {% if focus %}<a class="btn" href="/plans/{{ focus.target_id }}">Back to the plan</a>{% endif %}
+      <a class="btn primary" href="/mock?domain={{ mock.domain }}">Another mock</a>
+    </div>
   </header>
   {% if mock.score %}
   <section class="two-col">

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}New plan · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>New job plan</h1>
+  <div class="actions"><a class="btn" href="/plans">Back to plans</a></div>
+</header>
+
+{% if error %}<div class="banner warn">{{ error }}</div>{% endif %}
+
+{% if not resume %}
+  <div class="card">
+    <h2>Add your resume first</h2>
+    <p class="muted">A plan is your resume matched against the job description. Upload or paste
+      your resume in <a href="/settings">Settings</a> and come back.</p>
+  </div>
+{% else %}
+  <section class="two-col">
+    <form method="post" action="/api/plans" class="card stack" id="plan-form">
+      <h2>The job</h2>
+      <p class="muted small">Using your resume on file:
+        <strong>{{ resume.file_name or 'pasted text' }}</strong> ({{ resume.uploaded_at | dt }}).</p>
+      <label>Job description — paste the full text
+        <textarea name="jd_text" rows="16" required
+          placeholder="Paste the whole posting: responsibilities, requirements, nice-to-haves. The more of it, the better the plan."></textarea>
+      </label>
+      <label>Company <span class="muted small">optional — read from the JD if blank</span>
+        <input name="company" placeholder="Cloudflare">
+      </label>
+      <label>Role <span class="muted small">optional — read from the JD if blank</span>
+        <input name="role" placeholder="Staff Production Engineer">
+      </label>
+      <label>Interview date <span class="muted small">optional</span>
+        <input type="date" name="interview_date">
+      </label>
+      <label>Domain
+        <select name="domain">
+          <option value="auto">Detect from the job description</option>
+          {% for k, v in DOMAINS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="btn primary" type="submit" id="plan-submit">Analyse and build the plan</button>
+      <p class="muted small" id="plan-wait" hidden>Reading the job description against your
+        resume. This takes up to a minute — leave the page open.</p>
+    </form>
+
+    <div class="card">
+      <h2>What you get</h2>
+      <p class="muted">A short checklist — at most {{ MAX_FOCUS_AREAS }} focus areas, ordered by
+        what the job leans on most and your resume shows least. Each one links to a tutor session
+        or a scored mock.</p>
+      <p class="muted">Things your resume already covers are listed as strengths so you can skip
+        them. Requirements that do not fit any practice topic are listed separately rather than
+        forced into one.</p>
+      <p class="muted small">The plan is a fixed checklist: it does not reshuffle itself as your
+        scores change.</p>
+    </div>
+  </section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  document.querySelector('#plan-form')?.addEventListener('submit', (e) => {
+    const btn = document.querySelector('#plan-submit');
+    if (btn.disabled) { e.preventDefault(); return; }
+    btn.disabled = true; btn.textContent = 'Analysing…';
+    document.querySelector('#plan-wait').hidden = false;
+  });
+</script>
+{% endblock %}

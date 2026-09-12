@@ -53,7 +53,45 @@ def dashboard(request: Request):
         recent=repo.list_mocks(USER, status="finished", domain=domain, limit=8),
         recent_chats=repo.list_conversations(USER, domain=domain, limit=6),
         days_to_interview=days, counts=repo.activity_counts(USER),
-        config_problems=config.validate(),
+        config_problems=config.validate(), plans=repo.list_targets(USER, limit=5),
+    ))
+
+
+# ---------------------------------------------------------------------- plans
+@router.get("/plans", response_class=HTMLResponse)
+def plans_index(request: Request):
+    user = repo.get_user(USER)
+    return templates.TemplateResponse(request, "plans.html", _base(
+        request, user, page="plans", domain=_domain_arg(request, user),
+        targets=repo.list_targets(USER, status="active"),
+        archived=repo.list_targets(USER, status="archived"),
+        resume=repo.get_base_resume(USER),
+    ))
+
+
+# Declared before /plans/{target_id} so the literal path wins the match.
+@router.get("/plans/new", response_class=HTMLResponse)
+def plan_new(request: Request):
+    user = repo.get_user(USER)
+    return templates.TemplateResponse(request, "plan_new.html", _base(
+        request, user, page="plans", domain=_domain_arg(request, user),
+        resume=repo.get_base_resume(USER), error=request.query_params.get("error"),
+    ))
+
+
+@router.get("/plans/{target_id}", response_class=HTMLResponse)
+def plan_detail(request: Request, target_id: int):
+    user = repo.get_user(USER)
+    target = repo.get_target(target_id, USER)
+    if not target:
+        return RedirectResponse("/plans", status_code=303)
+    days = None
+    if target.get("interview_date"):
+        days = (target["interview_date"] - date.today()).days
+    return templates.TemplateResponse(request, "plan.html", _base(
+        request, user, page="plans", domain=target["domain"], target=target,
+        areas=repo.list_focus_areas(target_id), days_to_interview=days,
+        bank=bank_counts(), statuses=config.FOCUS_STATUSES,
     ))
 
 
@@ -65,7 +103,7 @@ def learn_index(request: Request):
     return templates.TemplateResponse(request, "learn.html", _base(
         request, user, page="learn", domain=domain, conversation=None, messages=[],
         conversations=repo.list_conversations(USER, domain=domain),
-        topic=request.query_params.get("topic") or config.TOPICS[domain][0],
+        topic=request.query_params.get("topic") or config.TOPICS[domain][0], focus=None,
     ))
 
 
@@ -80,6 +118,7 @@ def learn_conversation(request: Request, conv_id: int):
         messages=repo.list_messages(conv_id),
         conversations=repo.list_conversations(USER, domain=conv["domain"]),
         topic=conv["topic"],
+        focus=repo.get_focus(conv["focus_id"], USER) if conv.get("focus_id") else None,
     ))
 
 
@@ -95,7 +134,7 @@ def mock_index(request: Request):
         request, user, page="mock", domain=domain, mock=None,
         topic=request.query_params.get("topic") or config.TOPICS[domain][0],
         history=repo.list_mocks(USER, status="finished", limit=10),
-        counts=bank_counts(), covered=repo.covered_question_ids(USER),
+        counts=bank_counts(), covered=repo.covered_question_ids(USER), focus=None,
     ))
 
 
@@ -108,6 +147,7 @@ def mock_detail(request: Request, mock_id: int):
     return templates.TemplateResponse(request, "mock.html", _base(
         request, user, page="mock", domain=mock["domain"], mock=mock, topic=mock["topic"],
         rubric=RUBRICS.get(mock["topic"], []), history=[], counts={}, covered=set(),
+        focus=repo.get_focus(mock["focus_id"], USER) if mock.get("focus_id") else None,
     ))
 
 
@@ -210,4 +250,6 @@ def settings(request: Request):
         saved=request.query_params.get("saved") == "1", key_status=key_status,
         key_set=bool(config.ANTHROPIC_API_KEY), env_path=str(config.BASE_DIR / ".env"),
         default_model=config.DEFAULT_MODEL, db_url=config.DATABASE_URL,
+        resume=repo.get_base_resume(USER),
+        resume_error=request.query_params.get("resume_error"),
     ))

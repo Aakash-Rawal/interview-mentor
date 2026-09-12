@@ -92,6 +92,22 @@
     {% else %}<p class="muted">No scored mocks yet in this domain.</p>{% endif %}
   </div>
   <div class="card">
+    <h2>Job plans</h2>
+    {% if plans %}
+      <ul class="plain">
+      {% for t in plans %}
+        <li><a href="/plans/{{ t.id }}">{{ t.role or 'Role not set' }}</a>
+          <span class="muted">· {{ t.company or '—' }}
+            {% if t.interview_date %}· {{ t.interview_date | dt }}{% endif %}</span>
+          <div class="muted small">{{ t.ready_count }} of {{ t.focus_count }} focus areas ready</div></li>
+      {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">No plans yet. <a href="/plans/new">Paste a job description</a> and get a
+        study list matched to it.</p>
+    {% endif %}
+  </div>
+  <div class="card">
     <h2>Recent study sessions</h2>
     {% if recent_chats %}
       <ul class="plain">

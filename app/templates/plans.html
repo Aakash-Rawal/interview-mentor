@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Job plans · Interview Mentor{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Job plans</h1>
+  <div class="actions"><a class="btn primary" href="/plans/new">New plan</a></div>
+</header>
+
+{% if not resume %}
+<div class="banner warn">No resume on file. <a href="/settings">Add one in Settings</a> — a plan is
+  your resume compared against the job description, so it needs both.</div>
+{% endif %}
+
+{% if targets %}
+  <section class="cards">
+  {% for t in targets %}
+    <div class="card stat">
+      <div class="label">{{ t.company or 'Unnamed company' }}</div>
+      <div class="big small"><a href="/plans/{{ t.id }}">{{ t.role or 'Role not set' }}</a></div>
+      <div class="muted small">
+        {{ DOMAINS[t.domain] }}
+        {% if t.interview_date %} · {{ t.interview_date | dt }}{% endif %}
+      </div>
+      <div class="muted small">{{ t.ready_count }} of {{ t.focus_count }} focus areas ready
+        {% if t.avg_total is not none %} · avg <span class="score s{{ t.avg_total | round | int }}">{{ t.avg_total }}</span>{% endif %}
+      </div>
+    </div>
+  {% endfor %}
+  </section>
+{% else %}
+  <div class="card">
+    <h2>No plans yet</h2>
+    <p class="muted">Paste a job description and Claude compares it against your resume, then gives
+      you a short list of things to study for that specific job. Each item links straight into a
+      tutor session or a scored mock. One plan per job you are chasing.</p>
+    <a class="btn primary" href="/plans/new">Create your first plan</a>
+  </div>
+{% endif %}
+
+{% if archived %}
+<section class="card">
+  <h2>Archived</h2>
+  <table class="table">
+    <tbody>
+    {% for t in archived %}
+      <tr>
+        <td><a href="/plans/{{ t.id }}">{{ t.role or 'Role not set' }}</a>
+          <span class="muted">· {{ t.company or '—' }}</span></td>
+        <td class="muted small">{{ t.ready_count }}/{{ t.focus_count }} ready</td>
+        <td class="right">
+          <form method="post" action="/api/plans/{{ t.id }}/status">
+            <input type="hidden" name="status" value="active">
+            <button class="btn small" type="submit">Reactivate</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

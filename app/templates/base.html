@@ -22,6 +22,7 @@
     {% endfor %}
   </div>
   <a class="nav {{ 'on' if page == 'dashboard' else '' }}" href="/?domain={{ domain }}">Dashboard</a>
+  <a class="nav {{ 'on' if page == 'plans' else '' }}" href="/plans">Job plans</a>
   <a class="nav {{ 'on' if page == 'learn' else '' }}" href="/learn?domain={{ domain }}">Learn</a>
   <a class="nav {{ 'on' if page == 'mock' else '' }}" href="/mock?domain={{ domain }}">Mock interview
     {% if active_mock %}<span class="dot" title="mock in progress"></span>{% endif %}</a>

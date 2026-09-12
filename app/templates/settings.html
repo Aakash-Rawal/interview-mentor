@@ -41,6 +41,33 @@
   </form>
 
   <div class="card stack">
+    <h2>Your resume</h2>
+    <p class="muted small">Used to build job plans: the planner compares it against each job
+      description to work out what you need to study.</p>
+    {% if resume_error %}<div class="banner warn">{{ resume_error }}</div>{% endif %}
+    {% if resume %}
+      <p>On file: <strong>{{ resume.file_name or 'pasted text' }}</strong>
+        <span class="muted small">· {{ resume.uploaded_at | dt }} · {{ resume.content_text | length }} characters</span></p>
+      <details><summary class="muted">Show the extracted text</summary>
+        <div class="detail" style="margin-top:8px; max-height:300px; overflow:auto">{{ resume.content_text }}</div>
+      </details>
+    {% else %}
+      <p class="muted">No resume on file yet.</p>
+    {% endif %}
+    <form method="post" action="/api/resumes" enctype="multipart/form-data" class="stack">
+      <label>Upload <span class="muted small">.pdf, .docx or .txt</span>
+        <input type="file" name="file" accept=".pdf,.docx,.txt">
+      </label>
+      <label>…or paste the text
+        <textarea name="text" rows="6" placeholder="Paste your resume here if the file upload does not extract cleanly."></textarea>
+      </label>
+      <button class="btn" type="submit">Save resume</button>
+      <p class="muted small">Replaces the resume plans use from now on. Existing plans keep the
+        resume they were built from.</p>
+    </form>
+  </div>
+
+  <div class="card stack">
     <h2>System</h2>
     <p>API key: {% if key_set %}<strong>set</strong>{% else %}<strong class="down">not set</strong>{% endif %}
       <span class="muted small">— edit <code>{{ env_path }}</code> and restart the app to change it.</span></p>

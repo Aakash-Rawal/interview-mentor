@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A single-user, local web app for PE/SRE and Network Engineering interview prep: a Tutor
-(topic chat with memory) and an Interviewer (scored mock interviews), both backed by Claude.
+(topic chat with memory), an Interviewer (scored mock interviews), and a Planner (resume + job
+description -> a per-job study checklist), all backed by Claude.
 FastAPI + Jinja2 + one vanilla JS file; PostgreSQL for state; no Node, no build step.
 It normally runs as a macOS launchd agent at http://127.0.0.1:8765.
 
@@ -24,8 +25,10 @@ python -m question_bank.pipeline --sources hackernews github        # optional s
 
 Tests need local Postgres (`DATABASE_URL` in `.env`); web tests skip if it is unreachable.
 `tests/conftest.py` forces `INTERVIEW_MENTOR_USER_ID=pytest-user` and a dummy API key, and
-the DB tests delete their own rows. No test calls Claude: agents are monkeypatched
-(`api.tutor.stream_reply`, `api.interviewer.stream_turn/score`, `generator.call_claude`).
+its `purge_user()` helper is every module fixture's teardown (FK-safe, so the suite does not
+depend on file order). No test calls Claude: agents are monkeypatched
+(`api.tutor.stream_reply`, `api.interviewer.stream_turn/score`, `api.planner.build_plan`,
+`generator.call_claude`).
 Tests that touch the question bank monkeypatch `store.QUESTIONS_DIR` to `tmp_path` and call
 `store.invalidate()`.
 
@@ -43,7 +46,8 @@ and streaming. Chat and mock turns are `StreamingResponse` of plain text read by
 
 **Agents are stateless.** `context/learner.py::build_context()` assembles a fresh
 `LearnerContext` per request from the DB (profile, per-topic performance, prior sessions on
-the topic). `agents/tutor.py` and `agents/interviewer.py` only build prompts and call
+the topic, and the focus area when studying a job plan — its role and interview date then win
+over the profile's, and `focus_text()` becomes a prompt block in both agents). `agents/tutor.py` and `agents/interviewer.py` only build prompts and call
 `agents/base.py`; all conversation and mock state lives in Postgres via `db/repo.py`.
 A mock row stores a JSON snapshot of its question at start time, so editing a question file
 does not change an in-progress or finished mock.
@@ -53,6 +57,21 @@ thinking, `output_config.effort` (`EFFORT_CHAT` for turns, `EFFORT_SCORE` for sc
 generation). `call_claude` streams under the hood and raises `ClaudeError` on refusal or
 `max_tokens` truncation; `stream_claude` yields deltas. Model is per-user (Settings) with
 `config.DEFAULT_MODEL` fallback; only ids in `config.MODELS` are allowed.
+
+**Job plans.** `agents/planner.py` takes the stored resume (`resumes`, `is_base`) plus a pasted
+JD and returns focus areas; `job_targets` is one row per job being chased and `focus_areas` its
+checklist. `conversations.focus_id` / `mocks.focus_id` tag study done against a focus area, so
+plan progress is a query rather than bookkeeping, and deleting a plan leaves the chats and mocks
+behind. A focus area's `topic` is only where its practice material comes from (skill file,
+rubric, question pool) — the `title` is the subject, and a loose topic fit is expected. `level`
+carries the distinction that matters: `tool` means the JD hires for operating something
+(Kubernetes, Terraform), so the tutor and interviewer stay at usage level; `concept` means the
+idea itself, so they go for depth. `normalise_plan()` closes the topic set — an unrecognised
+topic moves to the plan's `unmapped` list instead of being dropped or force-fit — and topics
+from the other domain are kept, with a focus area's real domain derived from its topic
+(`repo._focus_row`), so a PE plan can hold a routing focus area. The plan is a fixed checklist:
+nothing re-prioritises it as scores change. Growing the bank for a thin focus area is not wired
+in yet; use the Question bank page.
 
 **Skill files** (`skills/<domain>/*.md`) are prepended to tutor, interviewer, and generator
 prompts as ground truth and are editable in the app. `load_skill` is `lru_cache`d; the skill
@@ -83,5 +102,6 @@ tables may exist in a local DB and are unused.
 topic means touching all of these plus a skill file and at least one question file, and
 `tests/test_core.py` enforces that.
 
-**Not wired into the UI:** `agents/resume_agent.py` (works from Python) and the scraper
-pipeline (CLI only, feeds the same review queue).
+**Not wired into the UI:** `agents/resume_agent.py`'s analyze / tailor / cover_letter modes
+(they work from Python; only its `parse_resume_file` is used, by the resume upload) and the
+scraper pipeline (CLI only, feeds the same review queue).

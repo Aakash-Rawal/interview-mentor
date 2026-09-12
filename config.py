@@ -65,6 +65,14 @@ TOPIC_LABELS = {
 
 DIFFICULTIES = ["easy", "medium", "hard"]
 
+# --- Job plans -----------------------------------------------------------
+# A plan is a short checklist, not a wishlist: the planner is capped here.
+MAX_FOCUS_AREAS = 8
+# "tool" = the JD hires for operating something (Kubernetes, Terraform); teach and probe
+# at usage level. "concept" = the JD asks for the idea itself (BGP path selection).
+FOCUS_LEVELS = ("tool", "concept")
+FOCUS_STATUSES = ("todo", "studying", "ready")
+
 # Topic -> skill markdown prepended to the Tutor / Interviewer system prompt.
 SKILL_FILES = {
     "coding": "pe/coding_patterns.md",

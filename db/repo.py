@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from datetime import date
 
+import config
 from db.connection import get_cursor
 
 # --------------------------------------------------------------------- users
@@ -41,12 +42,13 @@ def update_user(user_id: str, *, background: dict | None = None,
 
 
 # ------------------------------------------------------------- conversations
-def create_conversation(user_id: str, domain: str, topic: str, title: str) -> int:
+def create_conversation(user_id: str, domain: str, topic: str, title: str,
+                        focus_id: int | None = None) -> int:
     with get_cursor(commit=True) as cur:
         cur.execute(
-            "INSERT INTO conversations (user_id, domain, topic, title) "
-            "VALUES (%s, %s, %s, %s) RETURNING id",
-            (user_id, domain, topic, title))
+            "INSERT INTO conversations (user_id, domain, topic, title, focus_id) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (user_id, domain, topic, title, focus_id))
         return cur.fetchone()["id"]
 
 
@@ -105,14 +107,15 @@ def add_message(conv_id: int, role: str, content: str) -> int:
 
 # --------------------------------------------------------------------- mocks
 def create_mock(user_id: str, domain: str, topic: str, question: dict,
-                difficulty: str, hints: bool) -> int:
+                difficulty: str, hints: bool, focus_id: int | None = None) -> int:
     transcript = [{"role": "assistant", "content": question["prompt"]}]
     with get_cursor(commit=True) as cur:
         cur.execute(
             "INSERT INTO mocks (user_id, domain, topic, question_id, question, difficulty, "
-            "hints, transcript) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "hints, transcript, focus_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "RETURNING id",
             (user_id, domain, topic, question["id"], json.dumps(question, default=str), difficulty,
-             hints, json.dumps(transcript)))
+             hints, json.dumps(transcript), focus_id))
         return cur.fetchone()["id"]
 
 
@@ -337,3 +340,144 @@ def unmark_promoted(qid: str) -> None:
 def delete_candidate(cid: int) -> None:
     with get_cursor(commit=True) as cur:
         cur.execute("DELETE FROM scraped_questions WHERE id = %s", (cid,))
+
+
+# ------------------------------------------------------------------- resumes
+def save_resume(user_id: str, content_text: str, file_name: str | None = None,
+                is_base: bool = True) -> int:
+    """Store a resume. The base resume is what new job plans use by default."""
+    with get_cursor(commit=True) as cur:
+        if is_base:
+            cur.execute("UPDATE resumes SET is_base = FALSE WHERE user_id = %s", (user_id,))
+        cur.execute("INSERT INTO resumes (user_id, file_name, content_text, is_base) "
+                    "VALUES (%s, %s, %s, %s) RETURNING id",
+                    (user_id, file_name, content_text, is_base))
+        return cur.fetchone()["id"]
+
+
+def get_base_resume(user_id: str) -> dict | None:
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM resumes WHERE user_id = %s "
+                    "ORDER BY is_base DESC, uploaded_at DESC LIMIT 1", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+# --------------------------------------------------------------- job targets
+def create_target(user_id: str, *, jd_text: str, company: str = "", role: str = "",
+                  domain: str = "pe", seniority: str = "", resume_id: int | None = None,
+                  interview_date: date | None = None, summary: str = "",
+                  strengths: list | None = None, unmapped: list | None = None) -> int:
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            "INSERT INTO job_targets (user_id, company, role, domain, seniority, jd_text, "
+            "resume_id, interview_date, summary, strengths, unmapped) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (user_id, company, role, domain, seniority, jd_text, resume_id, interview_date,
+             summary, json.dumps(strengths or []), json.dumps(unmapped or [])))
+        return cur.fetchone()["id"]
+
+
+def get_target(target_id: int, user_id: str) -> dict | None:
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM job_targets WHERE id = %s AND user_id = %s",
+                    (target_id, user_id))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def list_targets(user_id: str, status: str | None = "active", limit: int = 30) -> list[dict]:
+    """Job targets with plan progress rolled up from their focus areas."""
+    sql = ("SELECT t.*, "
+           "(SELECT count(*) FROM focus_areas f WHERE f.target_id = t.id) AS focus_count, "
+           "(SELECT count(*) FROM focus_areas f WHERE f.target_id = t.id "
+           " AND f.status = 'ready') AS ready_count, "
+           "(SELECT round(avg(m.total), 1) FROM mocks m JOIN focus_areas f ON f.id = m.focus_id "
+           " WHERE f.target_id = t.id AND m.status = 'finished' AND m.total IS NOT NULL) AS avg_total "
+           "FROM job_targets t WHERE t.user_id = %s")
+    vals: list = [user_id]
+    if status:
+        sql += " AND t.status = %s"; vals.append(status)
+    sql += " ORDER BY t.interview_date NULLS LAST, t.updated_at DESC LIMIT %s"
+    vals.append(limit)
+    with get_cursor() as cur:
+        cur.execute(sql, vals)
+        return [_target_row(r) for r in cur.fetchall()]
+
+
+def set_target_status(target_id: int, user_id: str, status: str) -> None:
+    with get_cursor(commit=True) as cur:
+        cur.execute("UPDATE job_targets SET status = %s, updated_at = now() "
+                    "WHERE id = %s AND user_id = %s", (status, target_id, user_id))
+
+
+def delete_target(target_id: int, user_id: str) -> None:
+    """Focus areas cascade; conversations and mocks survive with focus_id set NULL."""
+    with get_cursor(commit=True) as cur:
+        cur.execute("DELETE FROM job_targets WHERE id = %s AND user_id = %s",
+                    (target_id, user_id))
+
+
+def _target_row(row) -> dict:
+    d = dict(row)
+    if d.get("avg_total") is not None:
+        d["avg_total"] = float(d["avg_total"])
+    return d
+
+
+# --------------------------------------------------------------- focus areas
+def add_focus_areas(target_id: int, areas: list[dict]) -> int:
+    with get_cursor(commit=True) as cur:
+        for a in areas:
+            cur.execute(
+                "INSERT INTO focus_areas (target_id, title, topic, level, priority, why_jd, "
+                "gap, keywords) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (target_id, a["title"], a["topic"], a.get("level") or "concept",
+                 a.get("priority") or 5, a.get("why_jd") or "", a.get("gap") or "",
+                 json.dumps(list(a.get("keywords") or []))))
+    return len(areas)
+
+
+def list_focus_areas(target_id: int) -> list[dict]:
+    """Focus areas with the study done against each one."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT f.*, "
+            "(SELECT count(*) FROM mocks m WHERE m.focus_id = f.id "
+            " AND m.status = 'finished') AS mock_count, "
+            "(SELECT round(avg(m.total), 1) FROM mocks m WHERE m.focus_id = f.id "
+            " AND m.status = 'finished' AND m.total IS NOT NULL) AS avg_total, "
+            "(SELECT count(*) FROM conversations c WHERE c.focus_id = f.id "
+            " AND NOT c.archived) AS chat_count "
+            "FROM focus_areas f WHERE f.target_id = %s ORDER BY f.priority, f.id", (target_id,))
+        return [_focus_row(r) for r in cur.fetchall()]
+
+
+def get_focus(focus_id: int, user_id: str) -> dict | None:
+    """A focus area joined with its job target. None if it is not this user's."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT f.*, t.company, t.role, t.domain, t.seniority, t.interview_date, "
+            "t.id AS target_id, t.jd_text FROM focus_areas f "
+            "JOIN job_targets t ON t.id = f.target_id "
+            "WHERE f.id = %s AND t.user_id = %s", (focus_id, user_id))
+        row = cur.fetchone()
+        return _focus_row(row) if row else None
+
+
+def _focus_row(row) -> dict:
+    """A focus area's domain comes from its topic, not from its plan.
+
+    A production engineering plan can legitimately hold a routing focus area; studying it
+    has to use the network engineering domain or the topic would not resolve.
+    """
+    d = _target_row(row)
+    d["domain"] = config.domain_for_topic(d["topic"]) or d.get("domain") or "pe"
+    return d
+
+
+def set_focus_status(focus_id: int, user_id: str, status: str) -> None:
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            "UPDATE focus_areas SET status = %s WHERE id = %s AND target_id IN "
+            "(SELECT id FROM job_targets WHERE user_id = %s)", (status, focus_id, user_id))
